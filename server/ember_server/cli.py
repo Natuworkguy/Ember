@@ -174,6 +174,12 @@ def _store():
     return Store(home() / "ember.db")
 
 
+def mcp(_: argparse.Namespace) -> None:
+    from .mcp import main as run_mcp
+
+    run_mcp()
+
+
 def add(args: argparse.Namespace) -> None:
     text = " ".join(args.text) or sys.stdin.read()
     note, _ = _store().create(text, source="cli", tags=args.tag)
@@ -423,6 +429,11 @@ def main(argv: list[str] | None = None) -> None:
     note.add_argument("text", nargs="*")
     note.add_argument("--tag", action="append", default=[])
     note.set_defaults(go=add)
+
+    tools = commands.add_parser(
+        "mcp", help="your notes as tools for Flash or any MCP client, "
+        "over standard input and output; stops one already running")
+    tools.set_defaults(go=mcp)
 
     look = commands.add_parser("find", help="find notes")
     look.add_argument("query", nargs="*")

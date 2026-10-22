@@ -1,1 +1,0 @@
-The user keeps ideas in Ember, mostly said aloud to their Apple Watch. When they ask what they thought, planned or noted about something, search Ember with ember_search before answering, and quote the notes you use with their dates. "This week" is since 7d.

@@ -9,7 +9,7 @@ Why I built it: [I kept losing ideas, so I built an Apple Watch app that feeds m
 ```
  Apple Watch                      your computer                       Flash
  ───────────                      ─────────────                       ─────
- tap, speak, save  ── Wi-Fi ──▶  ember serve  ◀── extension ───  "what ideas did I
+ tap, speak, save  ── Wi-Fi ──▶  ember serve  ◀──── MCP ──────  "what ideas did I
  kept on the watch               notes.db, recordings              have this week about
  until home                      a banner on each new idea         my game engine?"
 ```
@@ -18,7 +18,7 @@ Why I built it: [I kept losing ideas, so I built an Apple Watch app that feeds m
 - **Never loses a note.** Every idea is saved on the watch first, in SwiftData, before anything touches the network. It syncs when you get home, and keeps trying until it does.
 - **One tap to capture.** The big button, a complication, Siri ("New idea in Ember"), the Smart Stack, or the Action Button on an Ultra.
 - **Local.** The server is one SQLite file on your computer. Recordings are transcribed there too. Nothing goes anywhere else.
-- **A Flash extension**, so Flash can read and write your notes, and **`ember`** in the terminal to browse them.
+- **An MCP server**, `ember mcp`, so Flash (or any MCP client) can read and write your notes, and **`ember`** in the terminal to browse them.
 
 ## How it hears you
 
@@ -74,29 +74,34 @@ On the watch, open Ember, go to **Settings**, and type (or say) the pairing code
 
 If your router later gives the computer a new address, the watch tries the computer's `.local` name, which it learned when pairing, and keeps whichever answers.
 
-### 3. Flash
+### 3. Flash, or any MCP client
+
+`ember mcp` is an MCP server. In Flash:
 
 ```text
-/extension install github@Natuworkguy/ember
+/mcp add ember /path/to/ember/server/.venv/bin/ember mcp
 ```
 
-That's all. Then just ask: *what ideas did I have this week about my game engine?* Flash searches Ember on its own, and asks you first before it saves, changes or deletes a note.
+(Just `ember mcp` if `ember` is on your PATH.) That's all. Then ask: *what ideas did I have this week about my game engine?* Flash searches Ember on its own, and asks you first before it saves, changes or deletes a note.
+
+Any other MCP client takes the same command, in the usual config:
+
+```json
+{"mcpServers": {"ember": {"command": "/path/to/ember/server/.venv/bin/ember", "args": ["mcp"]}}}
+```
 
 | Tool | Does |
 | --- | --- |
-| `ember_search` | Finds notes by words (any order, word starts are enough), time (`since: "7d"`), tag and source. |
-| `ember_note` | Reads one note, whole. |
-| `ember_tags` | Lists the tags in use. |
-| `ember_save` | Saves a note. `#hashtags` become tags. Asks first. |
-| `ember_change` | Changes a note's text or tags. Asks first. |
-| `ember_delete` | Deletes a note and its recording. Asks first. |
+| `search` | Finds notes by words (any order, word starts are enough), time (`since: "7d"`), tag and source. |
+| `note` | Reads one note, whole, by its id or the start of it. |
+| `tags` | Lists the tags in use. |
+| `save` | Saves a note. `#hashtags` become tags. |
+| `change` | Changes a note's text or tags. |
+| `delete` | Deletes a note and its recording. |
 
-The extension also adds:
+The first three only read, and say so, so a client can run them without asking. It works on the notes on this computer directly: it needs no token, and `ember serve` doesn't have to be running.
 
-- `/idea <words>`, which saves an idea from Flash.
-- `/ember <question>`, which asks about your ideas directly.
-
-It talks to Ember's API with the token `ember token --save` kept on this computer. If Ember runs on another computer, set its address and token in the extension's settings.
+Only one `ember mcp` runs at a time. Starting another stops the one already running and takes over, so a client that restarts never finds an old one left holding on.
 
 ## Using it
 

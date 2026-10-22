@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-SOURCES = ("watch", "cli", "flash", "api")
+SOURCES = ("watch", "cli", "mcp", "flash", "api")
 MAX_TEXT = 20_000
 MAX_TAGS = 20
 TAG_CHARS = 40
