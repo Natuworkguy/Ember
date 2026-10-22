@@ -1,0 +1,446 @@
+"""ember: run the server, make a token, pair the watch, and browse,
+save, find and change notes from the terminal."""
+
+from __future__ import annotations
+
+import argparse
+import os
+import platform
+import plistlib
+import secrets
+import shutil
+import subprocess  # nosec B404
+import sys
+from pathlib import Path
+
+from . import __version__
+
+DEFAULT_PORT = 8765
+
+
+def _addresses(port: int) -> list[str]:
+    """The addresses the watch can reach this computer at, on the same
+    network: its .local name first, which follows it to a new network."""
+
+    from .pairing import lan_address, local_name
+
+    return [f"http://{where}:{port}"
+            for where in (local_name(), lan_address()) if where]
+
+
+def serve(args: argparse.Namespace) -> None:
+    import uvicorn
+
+    from .app import create_app, home
+
+    app = create_app()
+    print(f"Ember {__version__}: notes in {home()}")
+    print("Point the watch at one of:")
+    for address in _addresses(args.port):
+        print(f"  {address}")
+    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+
+
+def token(args: argparse.Namespace) -> None:
+    from .app import token_file
+
+    made = secrets.token_urlsafe(32)
+    if args.save:
+        path = token_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch(mode=0o600)
+        path.write_text(made + "\n", encoding="utf-8")
+        os.chmod(path, 0o600)
+        print(f"Saved to {path}. Pair the watch with `ember pair`.")
+    print(made)
+
+
+def pair(args: argparse.Namespace) -> None:
+    from . import pairing
+    from .app import PAIR_MINUTES, configured_token, home, new_pairing
+
+    if not configured_token():
+        sys.exit("Make a token first: ember token --save")
+    host = args.address or pairing.lan_address()
+    port = int(os.environ.get("EMBER_PORT", DEFAULT_PORT))
+    secret = new_pairing(home())
+    try:
+        code = pairing.spaced(pairing.make(secret, host, port))
+    except pairing.BadCode:
+        # Not an IPv4 address to pack: the watch is told it as well.
+        print(f"On the watch, open Ember's settings, set the server to "
+              f"{host or 'this computer'}:{port}, and pair with {secret}.")
+    else:
+        print("On the watch, open Ember's settings and enter this "
+              "pairing code:")
+        print(f"\n    {code}\n")
+        print(f"It points the watch at {host}:{port}.")
+    print(f"It works once, for the next {PAIR_MINUTES} minutes.")
+
+
+LABEL = "io.ember.server"
+
+
+def launch_agent(program: str, banners: bool, log: Path) -> bytes:
+    """A launchd job that keeps `ember serve` running while you are
+    logged in on a Mac."""
+
+    job = {
+        "Label": LABEL,
+        "ProgramArguments": [program, "serve"],
+        "RunAtLoad": True,
+        "KeepAlive": True,
+        "StandardOutPath": str(log),
+        "StandardErrorPath": str(log),
+    }
+    if banners:
+        job["EnvironmentVariables"] = {"EMBER_BANNERS": "1"}
+    return plistlib.dumps(job)
+
+
+def systemd_unit(program: str, banners: bool = False) -> str:
+    return (
+        "[Unit]\nDescription=Ember, your watch's ideas\n"
+        "After=network-online.target\n\n"
+        f"[Service]\nExecStart={program} serve\nRestart=on-failure\n"
+        + ("Environment=EMBER_BANNERS=1\n" if banners else "")
+        + "\n[Install]\nWantedBy=default.target\n"
+    )
+
+
+def _run(*command: str) -> bool:
+    """Run COMMAND quietly: whether it worked."""
+
+    try:
+        done = subprocess.run(  # nosec B603
+            command, check=False, capture_output=True, text=True,
+        )
+    except OSError:
+        return False
+    return done.returncode == 0
+
+
+def service(args: argparse.Namespace) -> None:
+    from .app import configured_token, home
+
+    program = shutil.which("ember") or os.path.abspath(sys.argv[0])
+    system = platform.system()
+    if system == "Darwin":
+        path = Path.home() / "Library" / "LaunchAgents" / f"{LABEL}.plist"
+        where = f"gui/{os.getuid()}"
+        _run("launchctl", "bootout", where, str(path))
+        if args.action == "remove":
+            path.unlink(missing_ok=True)
+            print("Ember no longer starts at login.")
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        home().mkdir(parents=True, exist_ok=True)
+        path.write_bytes(launch_agent(program, args.banners,
+                                      home() / "server.log"))
+        started = _run("launchctl", "bootstrap", where, str(path))
+    elif system == "Linux":
+        path = Path.home() / ".config" / "systemd" / "user" / "ember.service"
+        if args.action == "remove":
+            _run("systemctl", "--user", "disable", "--now", "ember.service")
+            path.unlink(missing_ok=True)
+            print("Ember no longer starts at login.")
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(systemd_unit(program, args.banners),
+                        encoding="utf-8")
+        started = _run("systemctl", "--user", "daemon-reload") and _run(
+            "systemctl", "--user", "enable", "--now", "ember.service")
+    else:
+        sys.exit("Run `ember serve` at login with Task Scheduler.")
+    if not configured_token():
+        print("It needs a token first: ember token --save")
+    if not started:
+        sys.exit(f"Wrote {path}, but it could not be started. Run "
+                 "`ember serve` yourself instead.")
+    print(f"Ember starts at login now, and is running. ({path})")
+    if args.banners:
+        from .banners import isola_ready
+
+        where = ("in Isola's island while Isola runs, otherwise as "
+                 "notifications" if system == "Darwin" and isola_ready()
+                 else "as notifications")
+        print(f"New ideas show {where}.")
+
+
+def _store():
+    from .app import home
+    from .store import Store
+
+    return Store(home() / "ember.db")
+
+
+def add(args: argparse.Namespace) -> None:
+    text = " ".join(args.text) or sys.stdin.read()
+    note, _ = _store().create(text, source="cli", tags=args.tag)
+    print(note["id"])
+
+
+def find(args: argparse.Namespace) -> None:
+    """The notes matching, each whole: for reading, where list skims."""
+
+    from .store import NoteError
+    from .tui import about, shown_text
+
+    try:
+        found = _store().find(" ".join(args.query), since=args.since,
+                              tag=args.tag, limit=args.limit)
+    except NoteError as exc:
+        sys.exit(str(exc))
+    if not found:
+        print("No notes found.")
+        return
+    for k, note in enumerate(found):
+        if k:
+            print()
+        print(_paint(about(note), "2"))
+        print(shown_text(note))
+
+
+def notes(_: argparse.Namespace) -> None:
+    from .tui import browse
+
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        sys.exit("The notes browser needs a terminal. Try `ember list`.")
+    browse(_store())
+
+
+def _paint(text: str, code: str) -> str:
+    """TEXT in a colour, when printing to a terminal."""
+
+    if not sys.stdout.isatty() or os.environ.get("NO_COLOR"):
+        return text
+    return f"\033[{code}m{text}\033[0m"
+
+
+def list_notes(args: argparse.Namespace) -> None:
+    from datetime import datetime
+
+    from .tui import extra_tags, fit, short_time, shown_text, when
+
+    found = _store().find(" ".join(args.query), since=args.since,
+                          tag=args.tag, limit=args.limit)
+    if not args.query:
+        found.sort(key=lambda n: n["created_at"], reverse=True)
+    if not found:
+        print("No notes.")
+        return
+    now = datetime.now().astimezone()
+    room = shutil.get_terminal_size((100, 20)).columns
+    for note in found:
+        stamp = short_time(when(note["created_at"]), now)
+        tags = " ".join("#" + t for t in extra_tags(note))
+        text = shown_text(note)
+        rest = room - 22 - (len(tags) + 1 if tags else 0)
+        print(_paint(note["id"][:8], "38;5;208"),
+              _paint(f"{stamp:>9}", "2"),
+              " " + fit(text, max(10, rest)),
+              _paint(tags, "38;5;214") if tags else "")
+
+
+def _one(store, start: str) -> dict:
+    from .store import NoteError
+
+    try:
+        return store.get(store.resolve(start))
+    except NoteError as exc:
+        sys.exit(str(exc))
+
+
+def show(args: argparse.Namespace) -> None:
+    from .tui import about, shown_text
+
+    note = _one(_store(), args.id)
+    print(_paint(about(note), "2"))
+    if note["tags"]:
+        print(_paint(" ".join("#" + t for t in note["tags"]), "38;5;214"))
+    print()
+    print(shown_text(note))
+
+
+def edit(args: argparse.Namespace) -> None:
+    import shlex
+    import subprocess  # nosec B404
+    import tempfile
+
+    store = _store()
+    note = _one(store, args.id)
+    text = " ".join(args.text).strip()
+    if not text:
+        editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or (
+            "nano" if shutil.which("nano") else "vi")
+        with tempfile.NamedTemporaryFile("w", suffix=".md", prefix="ember-",
+                                         delete=False,
+                                         encoding="utf-8") as file:
+            file.write(note["text"])
+        try:
+            subprocess.call([*shlex.split(editor), file.name])  # nosec B603
+            with open(file.name, encoding="utf-8") as done:
+                text = done.read().strip()
+        finally:
+            os.unlink(file.name)
+    if not text or text == note["text"]:
+        print("Left as it was.")
+        return
+    store.update(note["id"], text=text)
+    print("Changed.")
+
+
+def remove(args: argparse.Namespace) -> None:
+    from .tui import fit
+
+    store = _store()
+    note = _one(store, args.id)
+    if not args.yes:
+        if not sys.stdin.isatty():
+            sys.exit("Add --yes to delete without asking.")
+        answer = input(f"Delete “{fit(note['text'] or 'a recording', 50)}”?"
+                       " [y/N] ")
+        if answer.strip().lower() not in ("y", "yes"):
+            print("Kept.")
+            return
+    store.delete(note["id"])
+    print("Deleted.")
+
+
+def tag(args: argparse.Namespace) -> None:
+    if not args.tags:
+        sys.exit("Give tags to add, or -tag to remove: ember tag 3f2a idea")
+    store = _store()
+    note = _one(store, args.id)
+    adding = [t for t in args.tags if not t.startswith("-")]
+    removing = [t[1:] for t in args.tags if t.startswith("-")]
+    note = store.update(note["id"], add_tags=[t.lstrip("+") for t in adding],
+                        remove_tags=removing)
+    print(" ".join("#" + t for t in note["tags"]) or "No tags.")
+
+
+def export(args: argparse.Namespace) -> None:
+    import json
+
+    from .tui import when
+
+    found = _store().find(since=args.since, tag=args.tag, limit=500)
+    found.sort(key=lambda n: n["created_at"])
+    if args.json:
+        print(json.dumps(found, indent=2, ensure_ascii=False))
+        return
+    print("# Ember notes\n")
+    for note in found:
+        moment = when(note["created_at"]).strftime("%a %b %d %Y, %H:%M")
+        tags = " ".join("#" + t for t in note["tags"])
+        print(f"## {moment}{'  ' + tags if tags else ''}\n")
+        print((note["text"] or "_(a recording that has no words yet)_")
+              + "\n")
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(
+        prog="ember", description="Ideas you say to your watch, kept here.",
+    )
+    parser.add_argument("--version", action="version",
+                        version=f"ember {__version__}")
+    commands = parser.add_subparsers(dest="command")
+
+    commands.add_parser(
+        "notes", help="browse your notes, full screen (just `ember` too)",
+    ).set_defaults(go=notes)
+
+    listed = commands.add_parser("list", help="list notes, newest first")
+    listed.add_argument("query", nargs="*")
+    listed.add_argument("--since", default="")
+    listed.add_argument("--tag", default="")
+    listed.add_argument("-n", "--limit", type=int, default=30)
+    listed.set_defaults(go=list_notes)
+
+    one = commands.add_parser("show", help="show one note, by its id")
+    one.add_argument("id", help="its id, or the start of it")
+    one.set_defaults(go=show)
+
+    change = commands.add_parser(
+        "edit", help="change a note: in $EDITOR, or give the new text")
+    change.add_argument("id")
+    change.add_argument("text", nargs="*")
+    change.set_defaults(go=edit)
+
+    gone = commands.add_parser("rm", help="delete a note")
+    gone.add_argument("id")
+    gone.add_argument("-y", "--yes", action="store_true",
+                      help="don't ask first")
+    gone.set_defaults(go=remove)
+
+    tags = commands.add_parser(
+        "tag", help="tag a note: ember tag 3f2a engine -old")
+    tags.add_argument("id")
+    # The rest as given, so -tag isn't taken for an option.
+    tags.add_argument("tags", nargs=argparse.REMAINDER,
+                      help="tags to add, or -tag to remove")
+    tags.set_defaults(go=tag)
+
+    out = commands.add_parser("export", help="every note, as Markdown")
+    out.add_argument("--json", action="store_true")
+    out.add_argument("--since", default="")
+    out.add_argument("--tag", default="")
+    out.set_defaults(go=export)
+
+    run = commands.add_parser("serve", help="run the server")
+    run.add_argument("--host", default=os.environ.get("EMBER_HOST",
+                                                      "0.0.0.0"))  # nosec B104
+    run.add_argument("--port", type=int,
+                     default=int(os.environ.get("EMBER_PORT", DEFAULT_PORT)))
+    run.set_defaults(go=serve)
+
+    made = commands.add_parser("token", help="make a new token")
+    made.add_argument("--save", action="store_true",
+                      help="keep it for `ember serve`, in ~/.ember/token")
+    made.set_defaults(go=token)
+
+    keep = commands.add_parser(
+        "service", help="start the server at login, so the watch can "
+        "always sync when you get home")
+    keep.add_argument("action", nargs="?", choices=["install", "remove"],
+                      default="install",
+                      help="install (the default) starts it at login and "
+                      "now; remove stops that")
+    keep.add_argument("--banners", "--isola", action="store_true",
+                      dest="banners",
+                      help="a banner for each new idea: in Isola's island "
+                      "when it's running, otherwise a notification")
+    keep.set_defaults(go=service)
+
+    link = commands.add_parser(
+        "pair", help="make a code to pair the watch with")
+    link.add_argument("--address", default="",
+                      help="the address the watch should use, when it is "
+                      "not this computer's address on the local network")
+    link.set_defaults(go=pair)
+
+    note = commands.add_parser("add", help="save a note")
+    note.add_argument("text", nargs="*")
+    note.add_argument("--tag", action="append", default=[])
+    note.set_defaults(go=add)
+
+    look = commands.add_parser("find", help="find notes")
+    look.add_argument("query", nargs="*")
+    look.add_argument("--since", default="")
+    look.add_argument("--tag", default="")
+    look.add_argument("--limit", type=int, default=20)
+    look.set_defaults(go=find)
+
+    args = parser.parse_args(argv)
+    if not args.command:
+        # Just `ember`: the notes, in a terminal; otherwise, the commands.
+        if sys.stdin.isatty() and sys.stdout.isatty():
+            args.go = notes
+        else:
+            parser.print_help()
+            return
+    args.go(args)
+
+
+if __name__ == "__main__":
+    main()

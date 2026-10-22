@@ -1,0 +1,200 @@
+{
+  "name": "ember",
+  "description": "Your watch's ideas in Flash: search them, read them, add to them.",
+  "version": "1.0.0",
+  "prompt": "flash/prompt.md",
+  "settings": [
+    {
+      "id": "url",
+      "label": "Server",
+      "type": "text",
+      "default": "http://localhost:8765",
+      "help": "Where `ember serve` runs."
+    },
+    {
+      "id": "token",
+      "label": "Token",
+      "type": "text",
+      "default": "",
+      "help": "Leave empty to use the one `ember token --save` kept on this computer."
+    }
+  ],
+  "commands": [
+    {
+      "name": "idea",
+      "description": "save an idea to Ember",
+      "run": [
+        "python",
+        "./flash/idea.py"
+      ]
+    },
+    {
+      "name": "ember",
+      "description": "ask about your ideas, as /ember what did I think about the engine this week",
+      "prompt": "flash/ember.md"
+    }
+  ],
+  "tools": [
+    {
+      "name": "ember_search",
+      "description": "Search the user's Ember notes: ideas they said to their watch, and notes saved for them. By words (any order, the start of a word will do), time, tag and source. With no query, the newest. Best matches first.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Words to look for. Leave out for the newest."
+          },
+          "since": {
+            "type": "string",
+            "description": "Made at or after this. An ISO date or time (2026-10-21), or how long ago: 24h, 7d, 2w, 3m."
+          },
+          "until": {
+            "type": "string",
+            "description": "Made before this. An ISO date or time (2026-10-21), or how long ago: 24h, 7d, 2w, 3m."
+          },
+          "tag": {
+            "type": "string",
+            "description": "Only with this tag."
+          },
+          "source": {
+            "type": "string",
+            "description": "Only from here: watch, cli, flash or api."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "At most this many, up to 100. 20 unless set."
+          }
+        }
+      },
+      "run": [
+        "python",
+        "./flash/tools.py",
+        "search"
+      ]
+    },
+    {
+      "name": "ember_note",
+      "description": "One Ember note, whole, by its id from ember_search.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "run": [
+        "python",
+        "./flash/tools.py",
+        "note"
+      ]
+    },
+    {
+      "name": "ember_tags",
+      "description": "Every tag in use in Ember, with how many notes have it.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      },
+      "run": [
+        "python",
+        "./flash/tools.py",
+        "tags"
+      ]
+    },
+    {
+      "name": "ember_save",
+      "description": "Save a new note to Ember for the user. #hashtags in the text become tags too.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "text"
+        ]
+      },
+      "run": [
+        "python",
+        "./flash/tools.py",
+        "save"
+      ],
+      "confirm": true
+    },
+    {
+      "name": "ember_change",
+      "description": "Change an Ember note: text replaces its text, tags replaces every tag, add_tags and remove_tags change some.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "add_tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "remove_tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "run": [
+        "python",
+        "./flash/tools.py",
+        "change"
+      ],
+      "confirm": true
+    },
+    {
+      "name": "ember_delete",
+      "description": "Delete an Ember note and its recording. It cannot be undone.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "run": [
+        "python",
+        "./flash/tools.py",
+        "delete"
+      ],
+      "confirm": true
+    }
+  ]
+}

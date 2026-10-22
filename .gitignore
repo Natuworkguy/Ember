@@ -1,0 +1,11 @@
+__pycache__/
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+build/
+DerivedData/
+*.xcodeproj/
+xcuserdata/
+.DS_Store
+watch/Local.xcconfig

@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Ember: the ASCII flame from `ember`, drawn.
+          )      the tip, a gap where the outline opens
+         ) \     the right edge sweeping out
+        / ) (    the left edge, and the inner tongue
+        \(_)/    the base closing around the ember     -->
+  <defs>
+    <linearGradient id="fire" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffd27a"/>
+      <stop offset=".45" stop-color="#ff8a35"/>
+      <stop offset="1" stop-color="#e5401a"/>
+    </linearGradient>
+    <radialGradient id="core" cx=".5" cy=".7" r=".62">
+      <stop offset="0" stop-color="#fff6dc"/>
+      <stop offset=".4" stop-color="#ffc35a"/>
+      <stop offset="1" stop-color="#ff6a2b"/>
+    </radialGradient>
+  </defs>
+  <g fill="none" stroke="url(#fire)" stroke-width="64" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 552 190 C 646 296 716 420 716 562 C 716 694 628 786 512 794"/>
+    <path d="M 452 300 C 374 382 308 472 308 582 C 308 694 394 786 512 794"/>
+  </g>
+  <!-- The ember, with its own tongue of flame leaning like the ASCII's ")". -->
+  <path fill="url(#core)" d="M 528 440 C 588 506 610 560 604 616 C 600 680 562 724 512 726 C 462 724 422 686 420 634 C 418 576 470 520 528 440 Z"/>
+</svg>

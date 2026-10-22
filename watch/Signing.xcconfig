@@ -1,0 +1,13 @@
+// Signing. Your own team and bundle ID go in Local.xcconfig, next to
+// this file. Git ignores it, so they never reach the repo:
+//
+//   DEVELOPMENT_TEAM = ABCDE12345
+//   EMBER_BUNDLE_ID = com.yourname.ember
+//
+// Without it, Xcode asks you to pick a team in Signing & Capabilities.
+
+EMBER_BUNDLE_ID = com.example.ember
+#include? "Local.xcconfig"
+
+// Shared by the app and its widget, so the widget can show your latest idea.
+EMBER_APP_GROUP = group.$(EMBER_BUNDLE_ID)

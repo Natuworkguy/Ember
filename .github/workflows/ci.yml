@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.10", "3.13"]
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install -e ".[dev]"
+      - run: ruff check .
+      - run: flake8 ember_server
+
+  watch:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: scripts/watch.sh
+      - name: Run in the watch simulator
+        run: scripts/watch.sh sim
+      - name: Screenshots on the smallest and largest watches
+        run: scripts/watch.sh screens
+      - uses: actions/upload-artifact@v4
+        with:
+          name: screens
+          path: watch/build/screens
+      - name: Screenshots in the log, for reading without the artifact
+        run: |
+          for shot in watch/build/screens/*.png; do
+            echo "=== $(basename "$shot")"
+            base64 -i "$shot" | fold -w 160
+            echo "=== end"
+          done
+      - name: Set up the server, started at login
+        run: |
+          scripts/server.sh
+          sleep 3
+          curl -sf -H "Authorization: Bearer $(cat ~/.ember/token)" \
+            http://localhost:8765/health

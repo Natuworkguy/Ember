@@ -1,0 +1,74 @@
+name: Ember
+options:
+  deploymentTarget:
+    watchOS: "10.0"
+  createIntermediateGroups: true
+  developmentLanguage: en
+# Your team and bundle ID live in Local.xcconfig, which git ignores.
+configFiles:
+  Debug: Signing.xcconfig
+  Release: Signing.xcconfig
+settings:
+  base:
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+    CODE_SIGN_STYLE: Automatic
+targets:
+  # The watch app itself: it needs no iPhone.
+  EmberWatch:
+    type: application
+    platform: watchOS
+    sources:
+      - path: Ember
+      - path: Shared
+    entitlements:
+      path: Ember/Ember.entitlements
+      properties:
+        com.apple.security.application-groups: [$(EMBER_APP_GROUP)]
+    settings:
+      base:
+        PRODUCT_NAME: Ember
+        PRODUCT_BUNDLE_IDENTIFIER: $(EMBER_BUNDLE_ID).watchkitapp
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        ENABLE_PREVIEWS: "YES"
+    info:
+      path: Ember/Info.plist
+      properties:
+        CFBundleDisplayName: Ember
+        EmberAppGroup: $(EMBER_APP_GROUP)
+        WKApplication: true
+        WKWatchOnly: true
+        NSMicrophoneUsageDescription: Ember records your idea when dictation is not available.
+        NSLocalNetworkUsageDescription: Ember syncs your ideas with the Ember server on your own computer.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        CFBundleURLTypes:
+          - CFBundleURLName: $(PRODUCT_BUNDLE_IDENTIFIER)
+            CFBundleURLSchemes: [ember]
+    dependencies:
+      - target: EmberWidgets
+    scheme: {}
+
+  # The complications, on the watch face and in the Smart Stack.
+  EmberWidgets:
+    type: app-extension
+    platform: watchOS
+    sources:
+      - path: EmberWidgets
+      - path: Shared
+    entitlements:
+      path: EmberWidgets/EmberWidgets.entitlements
+      properties:
+        com.apple.security.application-groups: [$(EMBER_APP_GROUP)]
+    settings:
+      base:
+        PRODUCT_NAME: EmberWidgets
+        PRODUCT_BUNDLE_IDENTIFIER: $(EMBER_BUNDLE_ID).watchkitapp.widgets
+    info:
+      path: EmberWidgets/Info.plist
+      properties:
+        CFBundleDisplayName: Ember
+        EmberAppGroup: $(EMBER_APP_GROUP)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension

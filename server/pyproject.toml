@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ember-server"
+version = "1.0.0"
+description = "Ideas you say to your watch, kept on your own computer."
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+]
+
+[project.optional-dependencies]
+vosk = ["vosk>=0.3.45"]
+dev = ["ruff>=0.5", "flake8>=7"]
+
+[project.scripts]
+ember = "ember_server.cli:main"
+
+[tool.setuptools]
+packages = ["ember_server"]
+
+[tool.ruff]
+line-length = 79
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "I", "DTZ"]
+
