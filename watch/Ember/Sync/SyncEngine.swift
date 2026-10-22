@@ -29,17 +29,25 @@ final class SyncEngine {
     private(set) var lastSynced: Date?
     /// Notes saved here and not yet on the server.
     private(set) var waiting = 0
+    /// Recordings on the server that it is still finding the words in.
+    private(set) var hearing = 0
 
     @ObservationIgnored private var running = false
     @ObservationIgnored private var again = false
     @ObservationIgnored private var triedOther = false
     private let monitor = NWPathMonitor()
     @ObservationIgnored private var online = false
+    @ObservationIgnored private var listening: Task<Void, Never>?
 
     /// Notes from elsewhere are brought to the watch when they are this
     /// new; older ones stay on the server.
     private static let keepDays = 30.0
     private static let keepCount = 300
+    /// How long to wait before each look for the words in a recording
+    /// the server is hearing, in seconds: often at first, since a short
+    /// one takes it a second or two, then less, about two and a half
+    /// minutes in all.
+    private static let hearingWaits: [Double] = [2, 2, 3, 3, 5, 5, 10, 10, 20, 30, 60]
 
     private init() {
         lastSynced = UserDefaults.standard.object(forKey: "lastSynced") as? Date
@@ -111,6 +119,7 @@ final class SyncEngine {
             status = .failed(error.localizedDescription)
         }
         countWaiting()
+        if status == .synced { waitForWords() }
     }
 
     /// The address it paired with stopped answering: most likely the
@@ -137,7 +146,28 @@ final class SyncEngine {
         let count = try? context.fetchCount(FetchDescriptor<Note>(
             predicate: #Predicate<Note> { $0.syncStateRaw != synced }))
         waiting = count ?? 0
+        let pending = "pending"
+        let heard = try? context.fetchCount(FetchDescriptor<Note>(
+            predicate: #Predicate<Note> {
+                $0.syncStateRaw == synced && $0.transcription == pending
+            }))
+        hearing = heard ?? 0
         Glance.refresh(lastSynced: lastSynced)
+    }
+
+    /// A recording just went up, and the server is finding its words:
+    /// look again soon, and again, until they come back to the watch.
+    private func waitForWords() {
+        guard listening == nil, hearing > 0 else { return }
+        listening = Task { @MainActor in
+            defer { listening = nil }
+            for wait in Self.hearingWaits {
+                try? await Task.sleep(for: .seconds(wait))
+                if Task.isCancelled { return }
+                await sync()
+                if hearing == 0 { return }
+            }
+        }
     }
 
     // MARK: Sending
@@ -196,20 +226,27 @@ final class SyncEngine {
     // MARK: Bringing back
 
     private func pull(_ client: ServerClient) async throws {
+        var heard = false
         while true {
             let changes = try await client.changes(since: cursor)
             for remote in changes.notes {
-                merge(remote)
+                heard = merge(remote) || heard
             }
             try context.save()
             cursor = changes.cursor
             if !changes.more { break }
         }
         trim()
+        // The words in something you recorded, back while you're looking.
+        if heard, WKApplication.shared().applicationState == .active {
+            WKInterfaceDevice.current().play(.success)
+        }
     }
 
-    private func merge(_ remote: RemoteNote) {
-        guard let id = UUID(uuidString: remote.id) else { return }
+    /// Bring REMOTE in. Returns whether it brought the words for a
+    /// recording that was being heard.
+    private func merge(_ remote: RemoteNote) -> Bool {
+        guard let id = UUID(uuidString: remote.id) else { return false }
         let found = try? context.fetch(FetchDescriptor<Note>(
             predicate: #Predicate<Note> { $0.id == id })).first
         if remote.deleted {
@@ -217,20 +254,22 @@ final class SyncEngine {
                 NoteStore.removeRecording(of: found)
                 context.delete(found)
             }
-            return
+            return false
         }
         if let found {
             // A note still on its way there keeps what was said here.
-            guard found.syncState == .synced, remote.rev > found.rev else { return }
+            guard found.syncState == .synced, remote.rev > found.rev else { return false }
+            let heard = found.transcription == "pending" && remote.transcription == "done"
+                && !remote.text.isEmpty
             found.text = remote.text
             found.tags = remote.tags
             found.transcription = remote.transcription
             found.updatedAt = Stamp.date(remote.updated_at) ?? .now
             found.rev = remote.rev
-            return
+            return heard
         }
         let made = Stamp.date(remote.created_at) ?? .now
-        guard Date.now.timeIntervalSince(made) < Self.keepDays * 86_400 else { return }
+        guard Date.now.timeIntervalSince(made) < Self.keepDays * 86_400 else { return false }
         let note = Note(id: id, text: remote.text, createdAt: made, source: remote.source)
         note.tags = remote.tags
         note.transcription = remote.transcription
@@ -239,6 +278,7 @@ final class SyncEngine {
         note.rev = remote.rev
         note.syncState = .synced
         context.insert(note)
+        return false
     }
 
     /// Keep the watch light: only the newest synced notes stay on it.
@@ -260,7 +300,10 @@ final class SyncEngine {
 
     /// Ask watchOS to wake Ember to sync in a while, so notes saved away
     /// from home go up soon after you get there, even if Ember stays shut.
-    static func scheduleRefresh(in minutes: Double = 30) {
+    /// Sooner while a recording is being heard, so its words are on the
+    /// watch when you next look.
+    static func scheduleRefresh(in minutes: Double? = nil) {
+        let minutes = minutes ?? (shared.hearing > 0 ? 5 : 30)
         WKApplication.shared().scheduleBackgroundRefresh(
             withPreferredDate: Date(timeIntervalSinceNow: minutes * 60),
             userInfo: "sync" as NSString

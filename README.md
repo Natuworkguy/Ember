@@ -27,7 +27,9 @@ Apple's speech APIs, the Speech framework (`SFSpeechRecognizer`) and the newer `
 - On Apple Watch Series 9 and later, and Ultra 2, dictation runs on the watch itself, with no network.
 - Older watches need Wi-Fi or cellular to dictate.
 
-For when dictation isn't there, or when you'd rather just talk, there's **Record**. Ember saves a 16 kHz WAV on the watch. When it syncs, your server finds the words with Flash's local listening models (Moonshine or Vosk) if Flash is installed in the same Python, or with Vosk directly (`EMBER_VOSK_MODEL`). The text then syncs back to the watch.
+For when dictation isn't there, or when you'd rather just talk, there's **Record**. Ember saves a 16 kHz WAV on the watch. When it syncs, your server hears it with [Moonshine](https://github.com/moonshine-ai/moonshine), a speech-to-text model that runs on your own computer, and the transcript comes back to the watch on its own. The watch keeps checking for a couple of minutes after the upload, so a short note's words usually show up in a few seconds, with a tap on your wrist. Until then it shows 👂. Nothing leaves your computer: the model downloads once, into `~/.ember/models`.
+
+Moonshine comes with the installer. Without it (`--no-moonshine`, or a computer it has no build for, like an Intel Mac), the server hears recordings with Flash's listening model if Flash is installed in the same Python, or with Vosk (`EMBER_VOSK_MODEL`).
 
 ## Set up
 
@@ -39,13 +41,14 @@ On the computer that's home when you are (macOS or Linux, Python 3.10 or later, 
 curl -fsSL https://raw.githubusercontent.com/Natuworkguy/Ember/main/install.sh | bash
 ```
 
-That installs `ember` to `~/.local/bin/ember`, makes a token, starts it at login, and prints a code for pairing the watch. Run it again to update. Options go after `bash -s --`:
+That installs `ember` to `~/.local/bin/ember` with Moonshine, makes a token, starts it at login, and prints a code for pairing the watch. Run it again to update. Options go after `bash -s --`:
 
 | Option | Does |
 | --- | --- |
 | `--dev` | Installs from the `dev` branch instead of `main`. |
 | `--no-login` | Doesn't start it at login; run `ember serve` yourself. |
 | `--no-banners` | No banner for each new idea. |
+| `--no-moonshine` | Doesn't install Moonshine, which hears what you record. |
 | `--uninstall` | Removes `ember` and stops it starting at login. Your notes stay in `~/.ember`. |
 
 For example, `curl -fsSL https://raw.githubusercontent.com/Natuworkguy/Ember/main/install.sh | bash -s -- --dev`. Working from a clone instead, `scripts/server.sh` does the same with the code in it, in `server/.venv`.
@@ -58,7 +61,8 @@ Each new idea gets a banner: in [Isola](https://github.com/Natuworkguy/Isola)'s 
 | `EMBER_DATA` | Where the notes live. `~/.ember` unless set. |
 | `EMBER_HOST`, `EMBER_PORT` | Where to listen. `0.0.0.0:8765` unless set. |
 | `EMBER_BANNERS` | `1` shows a banner for each new idea: in Isola's island while Isola is running (and its "Show banners from other apps and scripts" is on), otherwise a macOS notification, or `notify-send` on a Linux desktop. `EMBER_ISOLA=1` works too. |
-| `EMBER_VOSK_MODEL` | A Vosk model folder, for hearing recordings without Flash. |
+| `EMBER_MOONSHINE` | Which Moonshine model hears recordings: `tiny` (quickest), `small` (the default) or `medium` (the most accurate). `off` turns it off. |
+| `EMBER_VOSK_MODEL` | A Vosk model folder. Set, Vosk hears recordings instead of Moonshine. |
 
 ### 2. The watch
 
@@ -158,6 +162,7 @@ ember tag 3f2a engine -old      # add a tag, take one away
 ember rm 3f2a                   # asks first; --yes doesn't
 ember add an idea from here     # save one
 ember export > ideas.md         # everything, as Markdown (or --json)
+ember hear memo.wav             # the words in a recording, as the server hears them
 ```
 
 ## The API

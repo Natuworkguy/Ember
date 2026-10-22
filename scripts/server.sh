@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # Set up the Ember server on this computer, the one at home:
 #
-#   scripts/server.sh             install, make a token, start at login,
-#                                 and print the code that pairs the watch
+#   scripts/server.sh             install (with Moonshine, to hear what
+#                                 you record), make a token, start at
+#                                 login, and print the code that pairs
+#                                 the watch
 #   scripts/server.sh --no-login  the same, but don't start it at login
 #                                 (run server/.venv/bin/ember serve yourself)
 #   scripts/server.sh --no-banners  no banner for each new idea (in Isola's
 #                                 island when it runs, else a notification)
+#   scripts/server.sh --no-moonshine  without Moonshine
 #
 # Needs Python 3.10 or later. Everything goes in server/.venv; notes are
 # kept in ~/.ember.
@@ -21,11 +24,13 @@ die() { printf '\033[1;31mError:\033[0m %s\n' "$*" >&2; exit 1; }
 
 login=1
 banners=1
+moonshine=1
 for arg in "$@"; do
     case "$arg" in
     --no-login) login=0 ;;
     --no-banners) banners=0 ;;
-    *) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+    --no-moonshine) moonshine=0 ;;
+    *) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
     esac
 done
 
@@ -40,7 +45,7 @@ if command -v uv >/dev/null; then
     # uv makes venvs without pip, and needs none.
     say "Installing into server/.venv, with uv"
     [ -x "$venv/bin/python" ] || uv venv --quiet --python "$python" "$venv"
-    uv pip install --quiet --python "$venv/bin/python" -e "$root/server"
+    get() { uv pip install --quiet --python "$venv/bin/python" -e "$1"; }
 else
     say "Installing into server/.venv"
     [ -x "$venv/bin/python" ] || "$python" -m venv "$venv"
@@ -50,7 +55,20 @@ else
     has_pip || { rm -rf "$venv"; "$python" -m venv "$venv"; }
     has_pip || die "This Python makes venvs without pip. Install uv (brew install uv) and run this again."
     "$venv/bin/python" -m pip install --quiet --upgrade pip
-    "$venv/bin/python" -m pip install --quiet -e "$root/server"
+    get() { "$venv/bin/python" -m pip install --quiet -e "$1"; }
+fi
+
+# Moonshine has no build for every computer (an Intel Mac, an old Linux):
+# without it, Ember still saves what the watch heard itself.
+if [ "$moonshine" = 1 ] && ! get "$root/server[moonshine]"; then
+    say "Moonshine isn't available here, so recordings won't be heard on this computer"
+    moonshine=0
+fi
+[ "$moonshine" = 1 ] || get "$root/server"
+
+if [ "$moonshine" = 1 ]; then
+    say "Getting Moonshine's listening model ready"
+    "$ember" hear || say "It will download when your first recording comes in"
 fi
 
 data="${EMBER_DATA:-$HOME/.ember}"

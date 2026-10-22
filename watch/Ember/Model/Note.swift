@@ -70,6 +70,8 @@ final class Note {
         let length = Duration.seconds(audioDuration).formatted(.time(pattern: .minuteSecond))
         switch transcription {
         case "failed": return "Recording, \(length). It could not be heard."
+        case "pending" where syncState == .synced:
+            return "Recording, \(length). Being heard on your computer."
         default: return "Recording, \(length). Words once it syncs."
         }
     }

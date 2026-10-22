@@ -40,7 +40,7 @@ from . import __version__
 from .banners import Banners
 from .pairing import local_name
 from .store import MAX_TEXT, NoteError, Store
-from .transcribe import Unheard, transcribe
+from .transcribe import Unheard, transcribe, warm
 
 MAX_AUDIO = 25 * 1024 * 1024
 PAIR_MINUTES = 10
@@ -164,6 +164,7 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
+        threading.Thread(target=warm, name="ember-warm", daemon=True).start()
         yield
         store.close()
 

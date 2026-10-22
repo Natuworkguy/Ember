@@ -180,6 +180,28 @@ def mcp(_: argparse.Namespace) -> None:
     run_mcp()
 
 
+def hear(args: argparse.Namespace) -> None:
+    from .transcribe import Unheard, moonshine, moonshine_size, transcribe
+
+    try:
+        if not args.wav:
+            # Just getting it ready, so the first recording isn't kept
+            # waiting on the download.
+            size = moonshine_size()
+            if not size:
+                sys.exit("Moonshine is off (EMBER_MOONSHINE).")
+            try:
+                moonshine(size, quiet=False)
+            except ImportError:
+                sys.exit("Moonshine isn't installed: pip install "
+                         "'ember-server[moonshine]'")
+            print(f"Moonshine's {size} model is ready.")
+            return
+        print(transcribe(Path(args.wav).expanduser().read_bytes()))
+    except (Unheard, OSError) as exc:
+        sys.exit(str(exc))
+
+
 def add(args: argparse.Namespace) -> None:
     text = " ".join(args.text) or sys.stdin.read()
     note, _ = _store().create(text, source="cli", tags=args.tag)
@@ -434,6 +456,12 @@ def main(argv: list[str] | None = None) -> None:
         "mcp", help="your notes as tools for Flash or any MCP client, "
         "over standard input and output; stops one already running")
     tools.set_defaults(go=mcp)
+
+    listen = commands.add_parser(
+        "hear", help="the words in a WAV recording, as the server hears "
+        "them; with none, download Moonshine's model ahead of time")
+    listen.add_argument("wav", nargs="?", default="")
+    listen.set_defaults(go=hear)
 
     look = commands.add_parser("find", help="find notes")
     look.add_argument("query", nargs="*")

@@ -4,13 +4,15 @@
 #   curl -fsSL https://raw.githubusercontent.com/Natuworkguy/Ember/main/install.sh | bash
 #
 # It installs `ember` to ~/.local/bin/ember (its Python packages in
-# ~/.local/share/ember), makes a token, starts the server at login, and
-# prints the code that pairs the watch. Run it again to update.
+# ~/.local/share/ember), with Moonshine to hear recordings, makes a
+# token, starts the server at login, and prints the code that pairs the
+# watch. Run it again to update.
 #
 #   --dev          install from the dev branch instead of main
 #   --no-login     don't start it at login (run `ember serve` yourself)
 #   --no-banners   no banner for each new idea (in Isola's island when it
 #                  runs, otherwise a notification)
+#   --no-moonshine don't install Moonshine, which hears what you record
 #   --uninstall    remove ember and stop it starting at login (your notes,
 #                  in ~/.ember, stay)
 #
@@ -30,12 +32,14 @@ die() { printf '\033[1;31mError:\033[0m %s\n' "$*" >&2; exit 1; }
 branch=main
 login=1
 banners=1
+moonshine=1
 uninstall=0
 for arg in "$@"; do
     case "$arg" in
     --dev) branch=dev ;;
     --no-login) login=0 ;;
     --no-banners) banners=0 ;;
+    --no-moonshine) moonshine=0 ;;
     --uninstall) uninstall=1 ;;
     *) printf 'Unknown option: %s\n\n' "$arg" >&2
        sed -n '2,20p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//' >&2 || true
@@ -68,9 +72,11 @@ has_pip() { "$venv/bin/python" -m pip --version >/dev/null 2>&1; }
 if command -v uv >/dev/null; then
     say "Installing Ember from $branch, with uv"
     [ -x "$venv/bin/python" ] || uv venv --quiet --python "$python" "$venv"
-    # Again even when the version is the same: the branch may have moved.
-    uv pip install --quiet --python "$venv/bin/python" --reinstall-package \
-        ember-server "$source"
+    get() {
+        # Again even when the version is the same: the branch may have moved.
+        uv pip install --quiet --python "$venv/bin/python" \
+            --reinstall-package ember-server "$1"
+    }
 else
     say "Installing Ember from $branch"
     [ -x "$venv/bin/python" ] || "$python" -m venv "$venv"
@@ -80,15 +86,30 @@ else
     has_pip || { rm -rf "$venv"; "$python" -m venv "$venv"; }
     has_pip || die "This Python makes venvs without pip. Install uv (brew install uv) and run this again."
     "$venv/bin/python" -m pip install --quiet --upgrade pip
-    "$venv/bin/python" -m pip install --quiet --upgrade "$source"
-    # Again even when the version is the same: the branch may have moved.
-    "$venv/bin/python" -m pip install --quiet --force-reinstall --no-deps "$source"
+    get() {
+        "$venv/bin/python" -m pip install --quiet --upgrade "$1" &&
+        # Again even when the version is the same: the branch may have moved.
+        "$venv/bin/python" -m pip install --quiet --force-reinstall --no-deps "$source"
+    }
 fi
+
+# Moonshine has no build for every computer (an Intel Mac, an old Linux):
+# without it, Ember still saves what the watch heard itself.
+if [ "$moonshine" = 1 ] && ! get "ember-server[moonshine] @ $source"; then
+    say "Moonshine isn't available here, so recordings won't be heard on this computer"
+    moonshine=0
+fi
+[ "$moonshine" = 1 ] || get "$source"
 
 ln -sf "$venv/bin/ember" "$ember"
 say "Installed $("$ember" --version) to $ember"
 # Everything below finds this ember first, and so does the login service.
 export PATH="$bin:$PATH"
+
+if [ "$moonshine" = 1 ]; then
+    say "Getting Moonshine's listening model ready"
+    ember hear || say "It will download when your first recording comes in"
+fi
 
 data="${EMBER_DATA:-$HOME/.ember}"
 if [ -z "${EMBER_TOKEN:-}" ] && [ ! -s "$data/token" ]; then
