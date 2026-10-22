@@ -33,13 +33,24 @@ For when dictation isn't there, or when you'd rather just talk, there's **Record
 
 ### 1. The server
 
-On the computer that's home when you are (Python 3.10 or later):
+On the computer that's home when you are (macOS or Linux, Python 3.10 or later, and git):
 
 ```bash
-scripts/server.sh
+curl -fsSL https://raw.githubusercontent.com/Natuworkguy/Ember/main/install.sh | bash
 ```
 
-That installs Ember into `server/.venv`, makes a token, starts it at login, and prints a code for pairing the watch. Each new idea gets a banner: in [Isola](https://github.com/Natuworkguy/Isola)'s island while Isola is running, and otherwise as an ordinary notification, so it works the same on a computer without Isola. Ideas that sync together get one banner. Use `--no-banners` to skip them, and `--no-login` to run it yourself with `server/.venv/bin/ember serve`.
+That installs `ember` to `~/.local/bin/ember`, makes a token, starts it at login, and prints a code for pairing the watch. Run it again to update. Options go after `bash -s --`:
+
+| Option | Does |
+| --- | --- |
+| `--dev` | Installs from the `dev` branch instead of `main`. |
+| `--no-login` | Doesn't start it at login; run `ember serve` yourself. |
+| `--no-banners` | No banner for each new idea. |
+| `--uninstall` | Removes `ember` and stops it starting at login. Your notes stay in `~/.ember`. |
+
+For example, `curl -fsSL https://raw.githubusercontent.com/Natuworkguy/Ember/main/install.sh | bash -s -- --dev`. Working from a clone instead, `scripts/server.sh` does the same with the code in it, in `server/.venv`.
+
+Each new idea gets a banner: in [Isola](https://github.com/Natuworkguy/Isola)'s island while Isola is running, and otherwise as an ordinary notification, so it works the same on a computer without Isola. Ideas that sync together get one banner. Use `--no-banners` to skip them.
 
 | Variable | Meaning |
 | --- | --- |
@@ -70,7 +81,7 @@ EMBER_BUNDLE_ID = com.yourname.ember
 
 A free Apple ID works (Xcode, Settings, Accounts). Its team ID is the Development Team build setting once you pick it in Signing & Capabilities. With a free Apple ID the app runs for 7 days at a time; run `scripts/watch.sh install` again to renew it. Your notes stay.
 
-On the watch, open Ember, go to **Settings**, and type (or say) the pairing code `scripts/server.sh` printed, like `2232 4829 136`. That's the whole setup. The code carries your computer's address, so you never type an IP or a `.local` name, and its last digit catches typos. The token goes into the watch's Keychain. For a new code, run `server/.venv/bin/ember pair`.
+On the watch, open Ember, go to **Settings**, and type (or say) the pairing code the installer printed, like `2232 4829 136`. That's the whole setup. The code carries your computer's address, so you never type an IP or a `.local` name, and its last digit catches typos. The token goes into the watch's Keychain. For a new code, run `ember pair`.
 
 If your router later gives the computer a new address, the watch tries the computer's `.local` name, which it learned when pairing, and keeps whichever answers.
 
@@ -79,15 +90,15 @@ If your router later gives the computer a new address, the watch tries the compu
 `ember mcp` is an MCP server. In Flash:
 
 ```text
-/mcp add ember /path/to/ember/server/.venv/bin/ember mcp
+/mcp add ember ~/.local/bin/ember mcp
 ```
 
-(Just `ember mcp` if `ember` is on your PATH.) That's all. Then ask: *what ideas did I have this week about my game engine?* Flash searches Ember on its own, and asks you first before it saves, changes or deletes a note.
+(Just `ember mcp` if `~/.local/bin` is on your PATH.) That's all. Then ask: *what ideas did I have this week about my game engine?* Flash searches Ember on its own, and asks you first before it saves, changes or deletes a note.
 
 Any other MCP client takes the same command, in the usual config:
 
 ```json
-{"mcpServers": {"ember": {"command": "/path/to/ember/server/.venv/bin/ember", "args": ["mcp"]}}}
+{"mcpServers": {"ember": {"command": "/Users/you/.local/bin/ember", "args": ["mcp"]}}}
 ```
 
 | Tool | Does |
@@ -121,7 +132,7 @@ When you're away, notes wait on the watch. When the watch joins your home Wi-Fi,
 
 ## Your notes in the terminal
 
-Run `ember` on its own (from `server/.venv/bin`, or anywhere once it's on your `PATH`) and your notes open full screen: grouped by day, newest first, with the one you're on shown whole below. Ideas from your watch slide in while it's open.
+Run `ember` on its own and your notes open full screen: grouped by day, newest first, with the one you're on shown whole below. Ideas from your watch slide in while it's open.
 
 | Key | Does |
 | --- | --- |
