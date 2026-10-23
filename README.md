@@ -112,7 +112,9 @@ Any other MCP client takes the same command, in the usual config:
 | `tags` | Lists the tags in use. |
 | `save` | Saves a note. `#hashtags` become tags. |
 | `change` | Changes a note's text or tags. |
-| `delete` | Deletes a note and its recording. |
+| `delete` | Moves a note to the trash. |
+| `restore` | Brings a note back from the trash. |
+| `delete_forever` | Deletes a note forever, recording and all. |
 
 The first three only read, and say so, so a client can run them without asking. It works on the notes on this computer directly: it needs no token, and `ember serve` doesn't have to be running.
 
@@ -134,6 +136,10 @@ Only one `ember mcp` runs at a time. Starting another stops the one already runn
 
 When you're away, notes wait on the watch. When the watch joins your home Wi-Fi, Ember syncs. watchOS also wakes it every half hour or so to try in the background, so notes go up even if you never open the app.
 
+## The trash
+
+Deleting a note, on the watch, in the terminal or through MCP, moves it to the trash on your computer. It's gone from every list, search and the watch, but its words and recording are kept until you restore it or delete it forever. Deleting forever takes it out of the database and its recording off the disk; only its id is kept, so the watch hears it's gone.
+
 ## Your notes in the terminal
 
 Run `ember` on its own and your notes open full screen: grouped by day, newest first, with the one you're on shown whole below. Ideas from your watch slide in while it's open.
@@ -147,7 +153,9 @@ Run `ember` on its own and your notes open full screen: grouped by day, newest f
 | `n` | New note |
 | `e` | Edit it in `$EDITOR` |
 | `#` | Change its tags |
-| `d` | Delete it |
+| `d` `d` | Move it to the trash |
+| `d` `f` | Delete it forever (asks first) |
+| `T` | The trash, and back (`u` restores the note you're on) |
 | `c` | Copy its text |
 | `p` | Play its recording |
 | `?` / `q` | Help / quit |
@@ -159,7 +167,10 @@ ember list                      # newest first; ember list engine --since 7d
 ember show 3f2a                 # a note, by the start of its id
 ember edit 3f2a                 # in $EDITOR, or: ember edit 3f2a new words
 ember tag 3f2a engine -old      # add a tag, take one away
-ember rm 3f2a                   # asks first; --yes doesn't
+ember rm 3f2a                   # to the trash
+ember rm --forever 3f2a         # out of the database; asks first, --yes doesn't
+ember trash                     # what's in the trash; ember trash empty deletes it all
+ember restore 3f2a              # back from the trash
 ember add an idea from here     # save one
 ember export > ideas.md         # everything, as Markdown (or --json)
 ember hear memo.wav             # the words in a recording, as the server hears them
@@ -173,9 +184,11 @@ Every request needs `Authorization: Bearer <token>`, except `/pair`.
 | | |
 | --- | --- |
 | `POST /notes` | Saves a note: `{id, text, created_at, source, tags, audio}`. The id is a UUID the client makes, so sending the same note twice saves it once. |
-| `GET /notes?since=<rev>` | Everything changed after a revision, deletions included, oldest first: `{notes, cursor, more}`. `since` can also be a time. |
+| `GET /notes?since=<rev>` | Everything changed after a revision, oldest first: `{notes, cursor, more}`. A note moved to the trash or deleted forever comes as `"deleted": true`. `since` can also be a time. |
 | `GET /notes/search?q=&since=&until=&tag=` | Finds notes. |
-| `GET` / `PATCH` / `DELETE /notes/{id}` | Gets, changes or deletes one note. |
+| `GET` / `PATCH` / `DELETE /notes/{id}` | Gets, changes or moves one note to the trash. `DELETE /notes/{id}?forever=true` deletes it forever. |
+| `POST /notes/{id}/restore` | Brings a note back from the trash. |
+| `GET /trash`, `DELETE /trash` | Lists what's in the trash, or deletes all of it forever. |
 | `PUT /notes/{id}/audio` | Uploads a note's WAV recording. The server transcribes it in the background. |
 | `GET /notes/{id}/audio` | Gets the recording back. |
 | `GET /tags`, `GET /health` | |
@@ -188,7 +201,8 @@ A note looks like this:
   "id": "4a9c…", "text": "Chunked terrain streaming for the #engine",
   "created_at": "2026-10-21T08:15:00.000000Z", "updated_at": "…",
   "source": "watch", "tags": ["engine"], "audio": false,
-  "transcription": "none", "deleted": false, "rev": 12
+  "transcription": "none", "trashed": false, "trashed_at": "",
+  "deleted": false, "rev": 12
 }
 ```
 

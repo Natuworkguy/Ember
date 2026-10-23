@@ -228,7 +228,8 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
 
     @app.get("/notes/{note_id}", dependencies=[Depends(authorized)])
     def one(note_id: str) -> dict:
-        note = store.get(note_id)
+        # One in the trash too, saying so.
+        note = store.get(note_id, trashed=True)
         if note is None:
             raise NoteError(f"No note {note_id}.")
         return note
@@ -240,8 +241,24 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
                             remove_tags=change.remove_tags)
 
     @app.delete("/notes/{note_id}", dependencies=[Depends(authorized)])
-    def delete(note_id: str) -> dict:
+    def delete(note_id: str, forever: bool = False) -> dict:
+        """To the trash; with ?forever=true, out of the database."""
+
+        if forever:
+            return store.delete_forever(note_id)
         return store.delete(note_id)
+
+    @app.post("/notes/{note_id}/restore", dependencies=[Depends(authorized)])
+    def restore(note_id: str) -> dict:
+        return store.restore(note_id)
+
+    @app.get("/trash", dependencies=[Depends(authorized)])
+    def trash(limit: int = 200) -> dict:
+        return {"notes": store.find(trashed=True, limit=limit)}
+
+    @app.delete("/trash", dependencies=[Depends(authorized)])
+    def empty_trash() -> dict:
+        return {"deleted": store.empty_trash()}
 
     def hear(note_id: str, path: Path) -> None:
         try:

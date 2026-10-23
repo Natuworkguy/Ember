@@ -4,8 +4,12 @@ A note is what was said: its text, when, where it came from (the watch,
 Flash, the command line), its tags, and the recording it
 came from, if it came as audio. Every change takes the next revision
 number, so a client syncs by asking for everything after the last one it
-saw, deletions included: a deleted note is kept as a tombstone with no
-text, so the watch hears it is gone.
+saw, deletions included.
+
+Deleting a note moves it to the trash: out of every list, search and
+sync, until it is restored or deleted forever. Deleting forever takes it
+out of the database, recording and all; only its id and the revision it
+went at are kept, in `gone`, so the watch hears it is gone.
 
 A note's id is the client's: the watch makes it when you save, so sending
 the same note twice, after a dropped connection, saves it once.
@@ -53,6 +57,12 @@ CREATE TABLE IF NOT EXISTS notes (
 );
 CREATE INDEX IF NOT EXISTS notes_rev ON notes (rev);
 CREATE INDEX IF NOT EXISTS notes_created ON notes (created_at);
+CREATE TABLE IF NOT EXISTS gone (
+    id TEXT PRIMARY KEY,
+    rev INTEGER NOT NULL,
+    at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS gone_rev ON gone (rev);
 """
 
 FTS = """
@@ -156,12 +166,27 @@ class Store:
         with self._lock:
             self._db.execute("PRAGMA journal_mode=WAL")
             self._db.executescript(SCHEMA)
+            self._migrate()
             try:
                 self._db.executescript(FTS)
                 self.searchable = True
             except sqlite3.OperationalError:
                 # An SQLite built without FTS5 searches by LIKE instead.
                 self.searchable = False
+
+    def _migrate(self) -> None:
+        """Bring a file from before the trash up to date: notes get the
+        time they were trashed, and the tombstones deleted notes used to
+        leave go to `gone`."""
+
+        columns = {r["name"] for r in self._db.execute(
+            "PRAGMA table_info(notes)")}
+        if "trashed_at" not in columns:
+            self._db.execute("ALTER TABLE notes ADD COLUMN trashed_at TEXT")
+        self._db.execute(
+            "INSERT OR IGNORE INTO gone (id, rev, at) SELECT id, rev, "
+            "updated_at FROM notes WHERE deleted = 1")
+        self._db.execute("DELETE FROM notes WHERE deleted = 1")
 
     def close(self) -> None:
         with self._lock:
@@ -180,23 +205,40 @@ class Store:
             "tags": json.loads(row["tags"] or "[]"),
             "audio": bool(row["audio_path"]),
             "transcription": row["transcription"],
-            "deleted": bool(row["deleted"]),
+            "trashed": row["trashed_at"] is not None,
+            "trashed_at": row["trashed_at"] or "",
+            # To a client that syncs, a note in the trash is gone, until
+            # it is restored.
+            "deleted": row["trashed_at"] is not None,
             "rev": row["rev"],
         }
 
-    def get(self, note_id: str, *, deleted: bool = False) -> Optional[dict]:
+    @staticmethod
+    def _gone(row: sqlite3.Row) -> dict:
+        """A note deleted forever, as a client that syncs hears of it."""
+
+        return {
+            "id": row["id"], "text": "", "created_at": row["at"],
+            "updated_at": row["at"], "source": "api", "tags": [],
+            "audio": False, "transcription": NONE, "trashed": False,
+            "trashed_at": "", "deleted": True, "rev": row["rev"],
+        }
+
+    def get(self, note_id: str, *, trashed: bool = False) -> Optional[dict]:
+        """The note NOTE_ID: one in the trash only if TRASHED."""
+
         with self._lock:
             row = self._db.execute(
                 "SELECT * FROM notes WHERE id = ?", (key(note_id),),
             ).fetchone()
-        if row is None or (row["deleted"] and not deleted):
+        if row is None or (row["trashed_at"] is not None and not trashed):
             return None
         return self._note(row)
 
     def audio_path(self, note_id: str) -> Optional[Path]:
         with self._lock:
             row = self._db.execute(
-                "SELECT audio_path FROM notes WHERE id = ? AND deleted = 0",
+                "SELECT audio_path FROM notes WHERE id = ?",
                 (key(note_id),),
             ).fetchone()
         return Path(row["audio_path"]) if row and row["audio_path"] else None
@@ -213,16 +255,19 @@ class Store:
             where, value = "rev > ?", int(since or 0)
         else:
             where, value = "updated_at > ?", parse_time(since)
+        gone_where = where.replace("updated_at", "at")
         with self._lock:
-            rows = self._db.execute(
+            rows = [self._note(r) for r in self._db.execute(
                 f"SELECT * FROM notes WHERE {where} "  # nosec B608
                 "ORDER BY rev LIMIT ?", (value, limit + 1),
-            ).fetchall()
-            top = self._db.execute(
-                "SELECT COALESCE(MAX(rev), 0) FROM notes",
-            ).fetchone()[0]
+            ).fetchall()] + [self._gone(r) for r in self._db.execute(
+                f"SELECT * FROM gone WHERE {gone_where} "  # nosec B608
+                "ORDER BY rev LIMIT ?", (value, limit + 1),
+            ).fetchall()]
+            top = self.latest()
+        rows.sort(key=lambda n: n["rev"])
         more = len(rows) > limit
-        notes = [self._note(r) for r in rows[:limit]]
+        notes = rows[:limit]
         cursor = notes[-1]["rev"] if notes else (
             value if isinstance(value, int) else top
         )
@@ -231,13 +276,16 @@ class Store:
     def find(
         self, query: str = "", *, since: str = "", until: str = "",
         tag: str = "", source: str = "", limit: int = 20,
+        trashed: bool = False,
     ) -> list[dict]:
         """Notes matching QUERY's words (any order, the start of a word
         will do), made between SINCE and UNTIL, with TAG, from SOURCE:
-        the best matches first, or with no QUERY, the newest."""
+        the best matches first, or with no QUERY, the newest. Only the
+        ones in the trash, if TRASHED."""
 
         limit = max(1, min(int(limit or 20), MAX_LIMIT))
-        clauses = ["n.deleted = 0"]
+        clauses = ["n.trashed_at IS NOT NULL" if trashed
+                   else "n.trashed_at IS NULL"]
         values: list[Any] = []
         if since:
             clauses.append("n.created_at >= ?")
@@ -282,20 +330,22 @@ class Store:
 
         with self._lock:
             return self._db.execute(
-                "SELECT COALESCE(MAX(rev), 0) FROM notes",
+                "SELECT MAX(COALESCE((SELECT MAX(rev) FROM notes), 0), "
+                "COALESCE((SELECT MAX(rev) FROM gone), 0))",
             ).fetchone()[0]
 
-    def resolve(self, start: str) -> str:
+    def resolve(self, start: str, *, trashed: bool = False) -> str:
         """The id of the one note whose id starts with START, as git takes
-        a short hash."""
+        a short hash: in the trash, if TRASHED."""
 
         start = str(start or "").strip().lower()
         if len(start) < 4:
             raise NoteError("Give at least 4 characters of the note's id.")
         with self._lock:
             rows = self._db.execute(
-                "SELECT id FROM notes WHERE deleted = 0 AND id LIKE ?"
-                " LIMIT 2", (start.replace("%", "").replace("_", "") + "%",),
+                "SELECT id FROM notes WHERE (trashed_at IS NOT NULL) = ?"
+                " AND id LIKE ? LIMIT 2",
+                (int(trashed), start.replace("%", "").replace("_", "") + "%"),
             ).fetchall()
         if not rows:
             raise NoteError(f"No note {start}.")
@@ -309,7 +359,8 @@ class Store:
         with self._lock:
             rows = self._db.execute(
                 "SELECT json_each.value AS tag, COUNT(*) AS notes "
-                "FROM notes, json_each(notes.tags) WHERE notes.deleted = 0 "
+                "FROM notes, json_each(notes.tags) "
+                "WHERE notes.trashed_at IS NULL "
                 "GROUP BY json_each.value ORDER BY notes DESC, tag",
             ).fetchall()
         return [{"tag": r["tag"], "notes": r["notes"]} for r in rows]
@@ -317,9 +368,7 @@ class Store:
     # --- Writing ------------------------------------------------------
 
     def _next_rev(self) -> int:
-        return self._db.execute(
-            "SELECT COALESCE(MAX(rev), 0) + 1 FROM notes",
-        ).fetchone()[0]
+        return self.latest() + 1
 
     def create(
         self, text: str = "", *, note_id: str = "", source: str = "api",
@@ -344,9 +393,14 @@ class Store:
             note_id = str(uuid.uuid4())
         made = parse_time(created_at) if created_at else now()
         with self._lock:
-            had = self.get(note_id, deleted=True)
+            had = self.get(note_id, trashed=True)
             if had is not None:
                 return had, False
+            # Sent again after it was deleted forever: it stays gone.
+            gone = self._db.execute(
+                "SELECT * FROM gone WHERE id = ?", (note_id,)).fetchone()
+            if gone is not None:
+                return self._gone(gone), False
             self._db.execute(
                 "INSERT INTO notes (id, text, created_at, updated_at, source,"
                 " tags, transcription, rev) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -385,22 +439,62 @@ class Store:
             return self.get(note["id"])
 
     def delete(self, note_id: str) -> dict:
-        """Delete a note, keeping a tombstone for clients to sync. Its
-        recording goes with it."""
+        """Move a note to the trash: out of every list and sync, its
+        recording kept, until it is restored or deleted forever."""
 
         with self._lock:
             note = self.get(note_id)
             if note is None:
                 raise NoteError(f"No note {note_id}.")
-            path = self.audio_path(note["id"])
+            stamp = now()
             self._db.execute(
-                "UPDATE notes SET text = '', tags = '[]', audio_path = NULL,"
-                " deleted = 1, updated_at = ?, rev = ? WHERE id = ?",
-                (now(), self._next_rev(), note["id"]),
+                "UPDATE notes SET trashed_at = ?, updated_at = ?, rev = ?"
+                " WHERE id = ?", (stamp, stamp, self._next_rev(), note["id"]),
+            )
+            return self.get(note["id"], trashed=True)
+
+    def restore(self, note_id: str) -> dict:
+        """Bring a note back from the trash."""
+
+        with self._lock:
+            note = self.get(note_id, trashed=True)
+            if note is None or not note["trashed"]:
+                raise NoteError(f"No note {note_id} in the trash.")
+            self._db.execute(
+                "UPDATE notes SET trashed_at = NULL, updated_at = ?, rev = ?"
+                " WHERE id = ?", (now(), self._next_rev(), note["id"]),
+            )
+            return self.get(note["id"])
+
+    def delete_forever(self, note_id: str) -> dict:
+        """Take a note out of the database, from the trash or not, and its
+        recording off the disk. Only its id is kept, so clients that
+        sync hear it is gone."""
+
+        with self._lock:
+            note = self.get(note_id, trashed=True)
+            if note is None:
+                raise NoteError(f"No note {note_id}.")
+            path = self.audio_path(note["id"])
+            rev = self._next_rev()
+            self._db.execute("DELETE FROM notes WHERE id = ?", (note["id"],))
+            self._db.execute(
+                "INSERT OR REPLACE INTO gone (id, rev, at) VALUES (?, ?, ?)",
+                (note["id"], rev, now()),
             )
         if path is not None:
             path.unlink(missing_ok=True)
-        return self.get(note["id"], deleted=True)
+        return {**note, "deleted": True, "trashed": False, "rev": rev}
+
+    def empty_trash(self) -> int:
+        """Delete every note in the trash forever: how many."""
+
+        with self._lock:
+            ids = [r["id"] for r in self._db.execute(
+                "SELECT id FROM notes WHERE trashed_at IS NOT NULL")]
+            for note_id in ids:
+                self.delete_forever(note_id)
+        return len(ids)
 
     def set_audio(self, note_id: str, path: Path) -> dict:
         with self._lock:

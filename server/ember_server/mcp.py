@@ -109,11 +109,29 @@ TOOLS: list[dict] = [
     },
     {
         "name": "delete",
-        "description": "Delete an Ember note and its recording. It cannot "
-        "be undone.",
+        "description": "Move an Ember note to the trash. restore brings it "
+        "back.",
         "inputSchema": {"type": "object", "properties": {"id": ID},
                         "required": ["id"]},
-        "annotations": {"title": "Delete an Ember note",
+        "annotations": {"title": "Move an Ember note to the trash",
+                        "readOnlyHint": False, "destructiveHint": False},
+    },
+    {
+        "name": "restore",
+        "description": "Bring an Ember note back from the trash.",
+        "inputSchema": {"type": "object", "properties": {"id": ID},
+                        "required": ["id"]},
+        "annotations": {"title": "Restore an Ember note",
+                        "readOnlyHint": False, "destructiveHint": False},
+    },
+    {
+        "name": "delete_forever",
+        "description": "Delete an Ember note forever, from the trash or "
+        "not, recording and all. It cannot be undone: only when the user "
+        "asks for exactly that.",
+        "inputSchema": {"type": "object", "properties": {"id": ID},
+                        "required": ["id"]},
+        "annotations": {"title": "Delete an Ember note forever",
                         "readOnlyHint": False, "destructiveHint": True},
     },
 ]
@@ -149,13 +167,17 @@ class Tools:
         self.run: dict[str, Callable[[dict], str]] = {
             "search": self.search, "note": self.note, "tags": self.tags,
             "save": self.save, "change": self.change, "delete": self.delete,
+            "restore": self.restore, "delete_forever": self.delete_forever,
         }
 
-    def _id(self, args: dict) -> str:
+    def _id(self, args: dict, trashed: bool = False) -> str:
         given = str(args.get("id") or "").strip()
         if not given:
             raise NoteError("Give the note's id, as search shows it.")
-        return given if self.store.get(given) else self.store.resolve(given)
+        found = self.store.get(given, trashed=trashed)
+        if found is not None and found["trashed"] == trashed:
+            return found["id"]
+        return self.store.resolve(given, trashed=trashed)
 
     def search(self, args: dict) -> str:
         found = self.store.find(
@@ -198,7 +220,19 @@ class Tools:
     def delete(self, args: dict) -> str:
         note_id = self._id(args)
         self.store.delete(note_id)
-        return f"Deleted note {note_id}."
+        return f"Moved note {note_id} to the trash. restore brings it back."
+
+    def restore(self, args: dict) -> str:
+        return "Restored.\n" + line(self.store.restore(
+            self._id(args, trashed=True)))
+
+    def delete_forever(self, args: dict) -> str:
+        try:
+            note_id = self._id(args)
+        except NoteError:
+            note_id = self._id(args, trashed=True)
+        self.store.delete_forever(note_id)
+        return f"Deleted note {note_id} forever."
 
 
 # --- The protocol ---------------------------------------------------------

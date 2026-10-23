@@ -281,10 +281,6 @@ def _paint(text: str, code: str) -> str:
 
 
 def list_notes(args: argparse.Namespace) -> None:
-    from datetime import datetime
-
-    from .tui import extra_tags, fit, short_time, shown_text, when
-
     found = _store().find(" ".join(args.query), since=args.since,
                           tag=args.tag, limit=args.limit)
     if not args.query:
@@ -292,6 +288,14 @@ def list_notes(args: argparse.Namespace) -> None:
     if not found:
         print("No notes.")
         return
+    _print_list(found)
+
+
+def _print_list(found: list[dict]) -> None:
+    from datetime import datetime
+
+    from .tui import extra_tags, fit, short_time, shown_text, when
+
     now = datetime.now().astimezone()
     room = shutil.get_terminal_size((100, 20)).columns
     for note in found:
@@ -305,11 +309,20 @@ def list_notes(args: argparse.Namespace) -> None:
               _paint(tags, "38;5;214") if tags else "")
 
 
-def _one(store, start: str) -> dict:
+def _one(store, start: str, *, trash: bool = False) -> dict:
+    """The note START begins its id: one in the trash if TRASH, or, for
+    TRASH None, either."""
+
     from .store import NoteError
 
     try:
-        return store.get(store.resolve(start))
+        if trash is None:
+            try:
+                return store.get(store.resolve(start))
+            except NoteError:
+                trash = True
+        return store.get(store.resolve(start, trashed=bool(trash)),
+                         trashed=bool(trash))
     except NoteError as exc:
         sys.exit(str(exc))
 
@@ -357,17 +370,55 @@ def remove(args: argparse.Namespace) -> None:
     from .tui import fit
 
     store = _store()
-    note = _one(store, args.id)
+    if not args.forever:
+        note = store.delete(_one(store, args.id)["id"])
+        print(f"Moved to the trash. ember restore {note['id'][:8]} brings "
+              "it back.")
+        return
+    note = _one(store, args.id, trash=None)
     if not args.yes:
         if not sys.stdin.isatty():
-            sys.exit("Add --yes to delete without asking.")
-        answer = input(f"Delete “{fit(note['text'] or 'a recording', 50)}”?"
-                       " [y/N] ")
+            sys.exit("Add --yes to delete forever without asking.")
+        answer = input(f"Delete “{fit(note['text'] or 'a recording', 50)}”"
+                       " forever? It can't be brought back. [y/N] ")
         if answer.strip().lower() not in ("y", "yes"):
             print("Kept.")
             return
-    store.delete(note["id"])
-    print("Deleted.")
+    store.delete_forever(note["id"])
+    print("Deleted forever.")
+
+
+def restore(args: argparse.Namespace) -> None:
+    store = _store()
+    note = store.restore(_one(store, args.id, trash=True)["id"])
+    print(f"Restored {note['id'][:8]}.")
+
+
+def trash(args: argparse.Namespace) -> None:
+    store = _store()
+    if args.action == "empty":
+        count = len(store.find(trashed=True, limit=500))
+        if not count:
+            print("The trash is empty.")
+            return
+        if not args.yes:
+            if not sys.stdin.isatty():
+                sys.exit("Add --yes to empty the trash without asking.")
+            noun = "note" if count == 1 else "notes"
+            answer = input(f"Delete the {count} {noun} in the trash "
+                           "forever? [y/N] ")
+            if answer.strip().lower() not in ("y", "yes"):
+                print("Kept.")
+                return
+        print(f"Deleted {store.empty_trash()} forever.")
+        return
+    found = store.find(trashed=True, limit=500)
+    if not found:
+        print("The trash is empty.")
+        return
+    _print_list(found)
+    print(_paint("ember restore <id> brings one back; ember trash empty "
+                 "deletes them forever.", "2"))
 
 
 def tag(args: argparse.Namespace) -> None:
@@ -430,11 +481,27 @@ def main(argv: list[str] | None = None) -> None:
     change.add_argument("text", nargs="*")
     change.set_defaults(go=edit)
 
-    gone = commands.add_parser("rm", help="delete a note")
+    gone = commands.add_parser(
+        "rm", help="move a note to the trash, or delete it forever")
     gone.add_argument("id")
+    gone.add_argument("-f", "--forever", action="store_true",
+                      help="out of the database, recording and all; asks "
+                      "first")
     gone.add_argument("-y", "--yes", action="store_true",
                       help="don't ask first")
     gone.set_defaults(go=remove)
+
+    binned = commands.add_parser(
+        "trash", help="the notes in the trash; empty deletes them forever")
+    binned.add_argument("action", nargs="?", choices=["empty"])
+    binned.add_argument("-y", "--yes", action="store_true",
+                        help="don't ask first")
+    binned.set_defaults(go=trash)
+
+    back = commands.add_parser("restore", help="bring a note back from the "
+                               "trash")
+    back.add_argument("id")
+    back.set_defaults(go=restore)
 
     tags = commands.add_parser(
         "tag", help="tag a note: ember tag 3f2a engine -old")

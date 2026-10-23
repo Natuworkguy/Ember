@@ -6,8 +6,10 @@ Ideas from the watch slide in while it's open.
   ↑ ↓  j k     move              /     search, as you type
   enter        read it whole     t     pick a tag
   n            new note          e     edit in $EDITOR
-  #            change tags       d     delete
-  c            copy the text     p     play its recording
+  #            change tags       d d   move to the trash
+  c            copy the text     d f   delete forever
+  p            play its recording
+  T            the trash         u     restore, in the trash
   ?            these keys        q     quit
 """
 
@@ -141,12 +143,14 @@ class Browser:
         self.fresh: dict[str, float] = {}
         self.rev = -1
         self.started = False
+        self.trash = False     # showing the trash, not the notes
 
     # --- Data -------------------------------------------------------------
 
     def load(self, keep: Optional[str] = None) -> None:
         keep = keep or (self.current or {}).get("id")
-        self.notes = self.store.find(self.query, tag=self.tag, limit=500)
+        self.notes = self.store.find(self.query, tag=self.tag, limit=500,
+                                     trashed=self.trash)
         if not self.query:
             self.notes.sort(key=lambda n: n["created_at"], reverse=True)
         now = datetime.now().astimezone()
@@ -233,7 +237,7 @@ class Browser:
 
     def draw_head(self, top: int, w: int) -> None:
         count = f"{len(self.notes)} note{'s' if len(self.notes) != 1 else ''}"
-        bits = [count]
+        bits = [count + (" in the trash" if self.trash else "")]
         if self.query:
             bits.append(f"matching “{self.query}”")
         if self.tag:
@@ -258,6 +262,8 @@ class Browser:
         room = y1 - y0
         if not self.rows:
             empty = ("Nothing matches." if self.query or self.tag else
+                     "The trash is empty. T goes back to your notes."
+                     if self.trash else
                      "No ideas yet. Say one to your watch, or press n.")
             self.put(y0 + 1, 3, empty, curses.color_pair(DIM))
             return
@@ -328,10 +334,15 @@ class Browser:
             colour = GOOD if self.said_good else BAD
             self.put(y, 1, self.said, curses.color_pair(colour))
             return
-        keys = ("enter back  e edit  # tags  d delete  c copy  q quit"
-                if self.reading else
-                "/ search  t tag  n new  e edit  # tags  d delete  "
-                "c copy  p play  ? help  q quit")
+        keys = (
+            "enter back  u restore  d f delete forever  T notes  q quit"
+            if self.trash and self.reading else
+            "/ search  u restore  d f delete forever  T back to notes  "
+            "? help  q quit" if self.trash else
+            "enter back  e edit  # tags  d delete  c copy  q quit"
+            if self.reading else
+            "/ search  t tag  n new  e edit  # tags  d delete  "
+            "c copy  p play  T trash  ? help  q quit")
         self.put(y, 1, keys, curses.color_pair(DIM))
 
     # --- Asking -----------------------------------------------------------
@@ -503,13 +514,54 @@ class Browser:
         self.load()
         self.say("Tagged." if tags else "Tags cleared.")
 
+    def choose(self, prompt: str) -> object:
+        """A key pressed in answer to PROMPT, at the bottom."""
+
+        h, w = self.screen.getmaxyx()
+        self.put(h - 1, 0, " " * (w - 1))
+        self.put(h - 1, 1, prompt, curses.color_pair(BAD) | curses.A_BOLD)
+        self.screen.refresh()
+        return self.wait_key()
+
+    def _step_off(self) -> None:
+        self.move(1) if self.at + 1 < len(self.rows) else self.move(-1)
+
     def delete(self) -> None:
+        """d, then d for the trash or f for forever; in the trash, f."""
+
         note = self.current
-        if note and self.confirm("Delete this note?"):
-            self.move(1) if self.at + 1 < len(self.rows) else self.move(-1)
+        if not note:
+            return
+        key = self.choose(
+            "Delete forever?  f yes  ·  any other key keeps it"
+            if self.trash else
+            "Delete:  d to the trash  ·  f forever  ·  esc keeps it")
+        if key == "d" and not self.trash:
+            self._step_off()
             self.store.delete(note["id"])
             self.load()
-            self.say("Deleted.")
+            self.say("Moved to the trash. T shows it, u restores.")
+        elif key == "f" and (self.trash or self.confirm(
+                "Delete forever? It can't be brought back.")):
+            self._step_off()
+            self.store.delete_forever(note["id"])
+            self.load()
+            self.say("Deleted forever.")
+
+    def restore(self) -> None:
+        note = self.current
+        if not note or not self.trash:
+            return
+        self._step_off()
+        self.store.restore(note["id"])
+        self.load()
+        self.say("Restored.")
+
+    def toggle_trash(self) -> None:
+        self.trash = not self.trash
+        self.reading = False
+        self.query, self.tag = "", ""
+        self.load()
 
     def copy(self) -> None:
         note = self.current
@@ -584,11 +636,14 @@ class Browser:
 
     def handle(self, key) -> Optional[bool]:
         if key in ("q", "Q") or (key == "\x1b" and not self.reading
-                                 and not self.query and not self.tag):
+                                 and not self.query and not self.tag
+                                 and not self.trash):
             return False
         if key == "\x1b":
             if self.reading:
                 self.reading = False
+            elif self.trash and not self.query and not self.tag:
+                self.toggle_trash()
             else:
                 self.query, self.tag = "", ""
                 self.load()
@@ -618,6 +673,10 @@ class Browser:
             self.retag()
         elif key == "d":
             self.delete()
+        elif key == "u":
+            self.restore()
+        elif key == "T":
+            self.toggle_trash()
         elif key == "c":
             self.copy()
         elif key == "p":
