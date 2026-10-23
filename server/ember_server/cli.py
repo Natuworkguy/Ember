@@ -180,9 +180,42 @@ def mcp(_: argparse.Namespace) -> None:
     run_mcp()
 
 
+def install_moonshine() -> None:
+    """Install Moonshine into the Python Ember runs in: with its pip, or
+    with uv for a venv uv made, which has none. Exits saying why when it
+    cannot."""
+
+    from .transcribe import MOONSHINE_PACKAGE
+
+    print(f"Installing Moonshine into {sys.prefix}")
+    has_pip = subprocess.run(  # nosec B603  (this Python, a fixed module)
+        [sys.executable, "-m", "pip", "--version"],
+        capture_output=True, check=False,
+    ).returncode == 0
+    uv = shutil.which("uv")
+    if has_pip:
+        argv = [sys.executable, "-m", "pip", "install", "--upgrade",
+                MOONSHINE_PACKAGE]
+    elif uv:
+        argv = [uv, "pip", "install", "--python", sys.executable,
+                "--upgrade", MOONSHINE_PACKAGE]
+    else:
+        sys.exit("This Python has no pip, and uv isn't installed. Install "
+                 "uv (brew install uv), then try again.")
+    if subprocess.run(argv, check=False).returncode:  # nosec B603
+        sys.exit(
+            "Moonshine could not be installed. It has builds for Apple "
+            "Silicon Macs, Linux (x86 and ARM) and Windows, but not for "
+            "an Intel Mac. There, set EMBER_VOSK_MODEL to a Vosk model "
+            "folder instead."
+        )
+
+
 def hear(args: argparse.Namespace) -> None:
     from .transcribe import Unheard, moonshine, moonshine_size, transcribe
 
+    if args.install:
+        install_moonshine()
     try:
         if not args.wav:
             # Just getting it ready, so the first recording isn't kept
@@ -193,9 +226,11 @@ def hear(args: argparse.Namespace) -> None:
             try:
                 moonshine(size, quiet=False)
             except ImportError:
-                sys.exit("Moonshine isn't installed: pip install "
-                         "'ember-server[moonshine]'")
-            print(f"Moonshine's {size} model is ready.")
+                sys.exit("Moonshine isn't installed: ember hear --install "
+                         "adds it.")
+            print(f"Moonshine's {size} model is ready."
+                  + (" A running `ember serve` uses it from the next "
+                     "recording." if args.install else ""))
             return
         print(transcribe(Path(args.wav).expanduser().read_bytes()))
     except (Unheard, OSError) as exc:
@@ -461,6 +496,9 @@ def main(argv: list[str] | None = None) -> None:
         "hear", help="the words in a WAV recording, as the server hears "
         "them; with none, download Moonshine's model ahead of time")
     listen.add_argument("wav", nargs="?", default="")
+    listen.add_argument("--install", action="store_true",
+                        help="install Moonshine first, which hears "
+                        "recordings on this computer")
     listen.set_defaults(go=hear)
 
     look = commands.add_parser("find", help="find notes")

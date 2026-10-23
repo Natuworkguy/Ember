@@ -29,7 +29,7 @@ Apple's speech APIs, the Speech framework (`SFSpeechRecognizer`) and the newer `
 
 For when dictation isn't there, or when you'd rather just talk, there's **Record**. Ember saves a 16 kHz WAV on the watch. When it syncs, your server hears it with [Moonshine](https://github.com/moonshine-ai/moonshine), a speech-to-text model that runs on your own computer, and the transcript comes back to the watch on its own. The watch keeps checking for a couple of minutes after the upload, so a short note's words usually show up in a few seconds, with a tap on your wrist. Until then it shows 👂. Nothing leaves your computer: the model downloads once, into `~/.ember/models`.
 
-Moonshine comes with the installer. Without it (`--no-moonshine`, or a computer it has no build for, like an Intel Mac), the server hears recordings with Flash's listening model if Flash is installed in the same Python, or with Vosk (`EMBER_VOSK_MODEL`).
+Moonshine comes with the installer. Installed without it, `ember hear --install` adds it later, and a running server uses it from the next recording. Without it (`--no-moonshine`, or a computer it has no build for, like an Intel Mac), the server hears recordings with Flash's listening model if Flash is installed in the same Python, or with Vosk (`EMBER_VOSK_MODEL`).
 
 ## Set up
 
@@ -163,6 +163,7 @@ ember rm 3f2a                   # asks first; --yes doesn't
 ember add an idea from here     # save one
 ember export > ideas.md         # everything, as Markdown (or --json)
 ember hear memo.wav             # the words in a recording, as the server hears them
+ember hear --install            # add Moonshine, and download its model
 ```
 
 ## The API

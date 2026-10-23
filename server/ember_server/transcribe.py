@@ -12,6 +12,7 @@ is downloaded once, into ~/.ember/models, and runs here.
 from __future__ import annotations
 
 import array
+import importlib
 import io
 import json
 import os
@@ -22,6 +23,8 @@ from pathlib import Path
 
 RATE = 16_000
 
+# Moonshine's package, as `ember hear --install` installs it.
+MOONSHINE_PACKAGE = "moonshine-voice>=0.1.5"
 # Moonshine's English models, by the name EMBER_MOONSHINE takes, and the
 # architecture each is as moonshine_voice.ModelArch names it. Small is
 # the default: much more accurate than tiny, and a few seconds of speech
@@ -106,7 +109,13 @@ def moonshine(size: str, quiet: bool = True):
     time, and kept loaded after. Raises ImportError without the
     moonshine extra, Unheard when the model cannot be had."""
 
-    from moonshine_voice import ModelArch, Transcriber
+    try:
+        from moonshine_voice import ModelArch, Transcriber
+    except ImportError:
+        # Installed since this server started (ember hear --install):
+        # Python only looks again once told the folders have changed.
+        importlib.invalidate_caches()
+        from moonshine_voice import ModelArch, Transcriber
     from moonshine_voice.download import get_model_for_language
 
     with _moonshine_lock:
@@ -213,8 +222,8 @@ def transcribe(data: bytes) -> str:
                 raise Unheard("No words were heard in the recording.")
             return _sentence(text)
     raise Unheard(
-        "No listening model here. Install Ember again with its installer, "
-        "which adds Moonshine, or pip install 'ember-server[moonshine]'."
+        "No listening model here. `ember hear --install` adds Moonshine, "
+        "which hears recordings on this computer."
     )
 
 
