@@ -116,6 +116,8 @@ class Config:
     # A banner for each new idea: in Isola's island when it's running,
     # otherwise as this computer's own notification.
     banners: bool = False
+    # Answer the watch over Bluetooth LE (ble.py), beside HTTP.
+    bluetooth: bool = False
 
 
 class NoteIn(BaseModel):
@@ -165,7 +167,20 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         threading.Thread(target=warm, name="ember-warm", daemon=True).start()
+        peripheral = None
+        if config.bluetooth:
+            from .ble import Peripheral
+
+            peripheral = Peripheral(app)
+            try:
+                await peripheral.start()
+                print("Bluetooth: waiting for the watch.", flush=True)
+            except Exception as exc:  # noqa: BLE001  (said, and HTTP goes on)
+                print(f"Bluetooth could not start: {exc}", flush=True)
+                peripheral = None
         yield
+        if peripheral is not None:
+            await peripheral.stop()
         store.close()
 
     app = FastAPI(title="Ember", version=__version__, lifespan=lifespan,

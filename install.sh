@@ -101,6 +101,10 @@ if [ "$moonshine" = 1 ] && ! get "ember-server[moonshine] @ $source"; then
 fi
 [ "$moonshine" = 1 ] || get "$source"
 
+# The watch syncs over Bluetooth, with bless.
+get "ember-server[bluetooth] @ $source" ||
+    say "Bluetooth isn't available here, so the watch can't sync with this computer"
+
 ln -sf "$venv/bin/ember" "$ember"
 say "Installed $("$ember" --version) to $ember"
 # Everything below finds this ember first, and so does the login service.

@@ -21,6 +21,7 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: ruff check .
       - run: flake8 ember_server
+      - run: pytest -q
 
   watch:
     runs-on: macos-15

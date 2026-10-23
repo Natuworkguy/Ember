@@ -1,5 +1,4 @@
 import Foundation
-import Network
 import Observation
 import SwiftData
 import WatchKit
@@ -7,10 +6,12 @@ import WatchKit
 /// Sends what was saved here to the server, and brings back what changed
 /// there: words heard in a recording, notes an AI tool saved, deletions.
 ///
-/// It runs when Ember opens, when a note is saved, when the network
-/// changes (you walk in the door and the watch joins your Wi-Fi), and in
-/// the background now and then. A note that cannot be sent waits here,
-/// and is tried again each time; nothing is ever dropped.
+/// It talks to your computer over Bluetooth (BluetoothLink), so it syncs
+/// when the watch is near it. It runs when Ember opens, when a note is
+/// saved, every minute or so while Ember is open and the computer is out
+/// of reach, and in the background now and then. A note that cannot be
+/// sent waits here, and is tried again each time; nothing is ever
+/// dropped.
 @Observable
 @MainActor
 final class SyncEngine {
@@ -34,10 +35,12 @@ final class SyncEngine {
 
     @ObservationIgnored private var running = false
     @ObservationIgnored private var again = false
-    @ObservationIgnored private var triedOther = false
-    private let monitor = NWPathMonitor()
-    @ObservationIgnored private var online = false
     @ObservationIgnored private var listening: Task<Void, Never>?
+    @ObservationIgnored private var retrying: Task<Void, Never>?
+
+    /// How long to wait before trying again, while Ember is open and the
+    /// computer is out of reach.
+    private static let retrySeconds = 60.0
 
     /// Notes from elsewhere are brought to the watch when they are this
     /// new; older ones stay on the server.
@@ -51,15 +54,6 @@ final class SyncEngine {
 
     private init() {
         lastSynced = UserDefaults.standard.object(forKey: "lastSynced") as? Date
-        monitor.pathUpdateHandler = { path in
-            let now = path.status == .satisfied
-            Task { @MainActor in
-                let came = now && !SyncEngine.shared.online
-                SyncEngine.shared.online = now
-                if came { SyncEngine.shared.syncSoon() }
-            }
-        }
-        monitor.start(queue: DispatchQueue(label: "ember.network"))
         countWaiting()
     }
 
@@ -88,7 +82,6 @@ final class SyncEngine {
             return
         }
         running = true
-        triedOther = false
         defer { running = false }
         repeat {
             again = false
@@ -110,35 +103,25 @@ final class SyncEngine {
             UserDefaults.standard.set(lastSynced, forKey: "lastSynced")
             status = .synced
         } catch ServerError.unreachable(let why) {
-            if await moved(from: client) {
-                again = true
-            } else {
-                status = .offline(why)
-            }
+            status = .offline(why)
         } catch {
             status = .failed(error.localizedDescription)
         }
         countWaiting()
         if status == .synced { waitForWords() }
+        if case .offline = status { retryLater() }
     }
 
-    /// The address it paired with stopped answering: most likely the
-    /// router gave the computer a new one. Try its .local name, once a
-    /// sync, and keep whichever answers.
-    private func moved(from client: ServerClient) async -> Bool {
-        let settings = ServerSettings.load()
-        guard !triedOther, let other = settings.fallback, other != client.address else {
-            return false
+    /// Out of reach: try again in a minute, while Ember is open and
+    /// something is waiting to go.
+    private func retryLater() {
+        guard retrying == nil, waiting > 0 else { return }
+        retrying = Task { @MainActor in
+            defer { retrying = nil }
+            try? await Task.sleep(for: .seconds(Self.retrySeconds))
+            if Task.isCancelled { return }
+            if WKApplication.shared().applicationState == .active { syncSoon() }
         }
-        triedOther = true
-        do {
-            try await ServerClient(address: other, token: client.token, timeout: 6).health()
-        } catch {
-            return false
-        }
-        Keychain.write(other.absoluteString, for: "server")
-        Keychain.write(client.address.absoluteString, for: "server-fallback")
-        return true
     }
 
     private func countWaiting() {

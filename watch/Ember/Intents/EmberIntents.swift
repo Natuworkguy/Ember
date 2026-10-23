@@ -46,7 +46,7 @@ struct SaveIdeaIntent: AppIntent {
         }
         try NoteStore.save(text: words)
         Haptics.saved()
-        // Siri is not kept waiting on the network: a quick try, and if the
+        // Siri is not kept waiting on the computer: a quick try, and if the
         // server is not there, it syncs later as any note would.
         SyncEngine.shared.syncSoon()
         return .result(dialog: "Saved.")

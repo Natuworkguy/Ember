@@ -65,7 +65,7 @@ struct SyncRow: View {
     private var symbol: String {
         switch sync.status {
         case .syncing: return "arrow.triangle.2.circlepath"
-        case .offline: return "wifi.slash"
+        case .offline: return "antenna.radiowaves.left.and.right.slash"
         case .failed, .notSetUp: return "exclamationmark.triangle.fill"
         default: return sync.waiting > 0 ? "clock" : "checkmark.icloud"
         }

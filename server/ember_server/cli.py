@@ -31,13 +31,29 @@ def _addresses(port: int) -> list[str]:
 def serve(args: argparse.Namespace) -> None:
     import uvicorn
 
-    from .app import create_app, home
+    from . import ble
+    from .app import Config, configured_token, create_app, home
 
-    app = create_app()
+    bluetooth = args.bluetooth
+    if bluetooth:
+        missing = ble.available()
+        if missing:
+            print(missing)
+            bluetooth = False
+    app = create_app(Config(
+        token=configured_token(), data=home(),
+        banners="1" in (os.environ.get("EMBER_BANNERS", ""),
+                        os.environ.get("EMBER_ISOLA", "")),
+        bluetooth=bluetooth,
+    ))
     print(f"Ember {__version__}: notes in {home()}")
-    print("Point the watch at one of:")
-    for address in _addresses(args.port):
-        print(f"  {address}")
+    if bluetooth:
+        print("The watch syncs over Bluetooth, when it is near this "
+              "computer.")
+    if args.host not in ("127.0.0.1", "localhost", "::1"):
+        print("The API is open on the network too, at:")
+        for address in _addresses(args.port):
+            print(f"  {address}")
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 
 
@@ -56,25 +72,16 @@ def token(args: argparse.Namespace) -> None:
 
 
 def pair(args: argparse.Namespace) -> None:
-    from . import pairing
     from .app import PAIR_MINUTES, configured_token, home, new_pairing
 
     if not configured_token():
         sys.exit("Make a token first: ember token --save")
-    host = args.address or pairing.lan_address()
-    port = int(os.environ.get("EMBER_PORT", DEFAULT_PORT))
     secret = new_pairing(home())
-    try:
-        code = pairing.spaced(pairing.make(secret, host, port))
-    except pairing.BadCode:
-        # Not an IPv4 address to pack: the watch is told it as well.
-        print(f"On the watch, open Ember's settings, set the server to "
-              f"{host or 'this computer'}:{port}, and pair with {secret}.")
-    else:
-        print("On the watch, open Ember's settings and enter this "
-              "pairing code:")
-        print(f"\n    {code}\n")
-        print(f"It points the watch at {host}:{port}.")
+    print("With the watch near this computer, open Ember's settings and "
+          "enter this pairing code:")
+    print(f"\n    {secret[:3]} {secret[3:]}\n")
+    print("The watch finds this computer over Bluetooth. Keep `ember "
+          "serve` running.")
     print(f"It works once, for the next {PAIR_MINUTES} minutes.")
 
 
@@ -518,8 +525,14 @@ def main(argv: list[str] | None = None) -> None:
     out.set_defaults(go=export)
 
     run = commands.add_parser("serve", help="run the server")
+    # The API, for this computer's own scripts: the watch comes over
+    # Bluetooth. 0.0.0.0 opens it to the network too.
     run.add_argument("--host", default=os.environ.get("EMBER_HOST",
-                                                      "0.0.0.0"))  # nosec B104
+                                                      "127.0.0.1"))
+    run.add_argument("--no-bluetooth", dest="bluetooth",
+                     action="store_false",
+                     default=os.environ.get("EMBER_BLUETOOTH", "1") != "0",
+                     help="don't answer the watch over Bluetooth")
     run.add_argument("--port", type=int,
                      default=int(os.environ.get("EMBER_PORT", DEFAULT_PORT)))
     run.set_defaults(go=serve)
@@ -544,9 +557,6 @@ def main(argv: list[str] | None = None) -> None:
 
     link = commands.add_parser(
         "pair", help="make a code to pair the watch with")
-    link.add_argument("--address", default="",
-                      help="the address the watch should use, when it is "
-                      "not this computer's address on the local network")
     link.set_defaults(go=pair)
 
     note = commands.add_parser("add", help="save a note")

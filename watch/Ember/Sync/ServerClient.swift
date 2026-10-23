@@ -47,8 +47,8 @@ enum ServerError: LocalizedError {
     /// The server will not take it as it is, and says why. Trying again
     /// will not help.
     case rejected(String)
-    /// The server could not be reached: not on the same network, or not
-    /// running. It is tried again later.
+    /// The server could not be reached: not nearby, or not running. It
+    /// is tried again later.
     case unreachable(String)
     case failed(Int)
 
@@ -63,121 +63,60 @@ enum ServerError: LocalizedError {
     }
 }
 
-/// The server's address and token, as kept in the Keychain.
+/// The token for the server, as kept in the Keychain. Where the server
+/// is needs no keeping: the watch finds it over Bluetooth.
 struct ServerSettings {
-    static let defaultPort = 8765
-
-    var address: URL?
     var token: String
-    /// Another way to the same server, by its .local name, for when the
-    /// router gives the computer a new address.
-    var fallback: URL?
 
     static func load() -> ServerSettings {
-        ServerSettings(
-            address: Keychain.read("server").flatMap(URL.init(string:)),
-            token: Keychain.read("token") ?? "",
-            fallback: Keychain.read("server-fallback").flatMap(URL.init(string:)))
+        ServerSettings(token: Keychain.read("token") ?? "")
     }
 
-    var ready: Bool { address != nil && !token.isEmpty }
-
-    /// What was typed, as an address: `mac.local` is
-    /// `http://mac.local:8765`.
-    static func address(from typed: String) -> URL? {
-        var text = typed.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return nil }
-        if !text.contains("://") { text = "http://" + text }
-        guard var parts = URLComponents(string: text),
-              let host = parts.host, !host.isEmpty,
-              parts.scheme == "http" || parts.scheme == "https"
-        else { return nil }
-        if parts.port == nil, parts.scheme == "http" { parts.port = defaultPort }
-        parts.path = parts.path.hasSuffix("/") ? String(parts.path.dropLast()) : parts.path
-        parts.query = nil
-        parts.fragment = nil
-        return parts.url
-    }
+    var ready: Bool { !token.isEmpty }
 }
 
+/// The server's API, over Bluetooth (BluetoothLink): the same requests
+/// as HTTP, answered by the same server.
 struct ServerClient {
-    let address: URL
     let token: String
-    var timeout: TimeInterval = 15
+    var timeout: TimeInterval = 20
 
-    init?(_ settings: ServerSettings = .load(), timeout: TimeInterval = 15) {
-        guard let address = settings.address, !settings.token.isEmpty else { return nil }
-        self.address = address
+    init?(_ settings: ServerSettings = .load(), timeout: TimeInterval = 20) {
+        guard settings.ready else { return nil }
         self.token = settings.token
         self.timeout = timeout
     }
 
-    init(address: URL, token: String, timeout: TimeInterval = 15) {
-        self.address = address
+    init(token: String, timeout: TimeInterval = 20) {
         self.token = token
         self.timeout = timeout
     }
 
-    private static let session: URLSession = {
-        let config = URLSessionConfiguration.default
-        config.waitsForConnectivity = false
-        config.requestCachePolicy = .reloadIgnoringLocalCacheData
-        return URLSession(configuration: config)
-    }()
-
-    private func url(_ path: String, _ query: [URLQueryItem] = []) -> URL {
-        var parts = URLComponents(url: address, resolvingAgainstBaseURL: false)!
-        parts.path += path
-        if !query.isEmpty { parts.queryItems = query }
-        return parts.url!
-    }
-
-    private func request(_ path: String, method: String = "GET",
-                         query: [URLQueryItem] = [], signed: Bool = true) -> URLRequest {
-        var made = URLRequest(url: url(path, query), timeoutInterval: timeout)
-        made.httpMethod = method
-        if signed { made.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
-        return made
-    }
-
-    private func perform(_ request: URLRequest, body: Data?, file: URL?) async throws -> (Data, URLResponse) {
-        if let file {
-            return try await Self.session.upload(for: request, fromFile: file)
-        }
-        if let body {
-            return try await Self.session.upload(for: request, from: body)
-        }
-        return try await Self.session.data(for: request)
-    }
-
-    private func send(_ request: URLRequest, body: Data? = nil, file: URL? = nil) async throws -> Data {
-        let answer: (Data, URLResponse)
+    private func send(_ method: String, _ path: String, query: [URLQueryItem] = [],
+                      body: Data = Data(), kind: String? = nil,
+                      signed: Bool = true) async throws -> Data {
+        var headers: [String: String] = [:]
+        if signed { headers["Authorization"] = "Bearer \(token)" }
+        if let kind { headers["Content-Type"] = kind }
+        var parts = URLComponents()
+        parts.queryItems = query.isEmpty ? nil : query
+        let answer: BluetoothLink.Answer
         do {
-            answer = try await perform(request, body: body, file: file)
-        } catch let error as URLError {
-            throw ServerError.unreachable(Self.why(error))
+            // A recording takes longer to send: about 4 KB a second.
+            answer = try await BluetoothLink.shared.send(
+                method, path, query: parts.percentEncodedQuery ?? "",
+                headers: headers, body: body,
+                timeout: timeout + Double(body.count) / 4_000)
+        } catch let error as BluetoothLink.LinkError {
+            throw ServerError.unreachable(error.localizedDescription)
         }
-        let (data, response) = answer
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        switch status {
-        case 200..<300: return data
+        switch answer.status {
+        case 200..<300: return answer.body
         case 401: throw ServerError.unauthorized
         case 400, 403, 404, 409, 413, 422:
-            throw ServerError.rejected(Self.detail(data) ?? "The server would not take it (\(status)).")
-        default: throw ServerError.failed(status)
-        }
-    }
-
-    private static func why(_ error: URLError) -> String {
-        switch error.code {
-        case .notConnectedToInternet, .networkConnectionLost, .dataNotAllowed:
-            return "No network. It will sync when there is one."
-        case .timedOut, .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed:
-            return "The server is not reachable from here. It will sync when it is."
-        case .appTransportSecurityRequiresSecureConnection:
-            return "Use the server's address on your home network, or https."
-        default:
-            return error.localizedDescription
+            throw ServerError.rejected(Self.detail(answer.body)
+                ?? "The server would not take it (\(answer.status)).")
+        default: throw ServerError.failed(answer.status)
         }
     }
 
@@ -201,28 +140,24 @@ struct ServerClient {
     // MARK: The calls
 
     func health() async throws {
-        _ = try await send(request("/health"))
+        _ = try await send("GET", "/health")
     }
 
     struct Paired: Decodable {
         let token: String
-        /// The computer's .local name: where to look if its address changes.
         let name: String?
     }
 
     /// The token, for the secret in a code from `ember pair`.
     func pair(secret: String) async throws -> Paired {
-        var made = request("/pair", method: "POST", signed: false)
-        made.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let data = try await send(made, body: Self.json(["code": secret]))
+        let data = try await send("POST", "/pair", body: Self.json(["code": secret]),
+                                  kind: "application/json", signed: false)
         return try decode(Paired.self, data)
     }
 
     /// Send a note. The server keeps it under its id, so sending it again
     /// after a lost answer does no harm.
     func create(_ note: Outgoing) async throws -> RemoteNote {
-        var made = request("/notes", method: "POST")
-        made.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let body = Self.json([
             "id": note.id.uuidString,
             "text": note.text,
@@ -231,30 +166,29 @@ struct ServerClient {
             "tags": note.tags,
             "audio": note.audio,
         ])
-        let data = try await send(made, body: body)
+        let data = try await send("POST", "/notes", body: body, kind: "application/json")
         return try decode(RemoteNote.self, data)
     }
 
     func upload(recording file: URL, for id: UUID) async throws -> RemoteNote {
-        var made = request("/notes/\(id.uuidString)/audio", method: "PUT")
-        made.setValue("audio/wav", forHTTPHeaderField: "Content-Type")
-        let data = try await send(made, file: file)
+        let wav = try Data(contentsOf: file)
+        let data = try await send("PUT", "/notes/\(id.uuidString)/audio", body: wav, kind: "audio/wav")
         return try decode(RemoteNote.self, data)
     }
 
     func delete(_ id: UUID) async throws {
         do {
-            _ = try await send(request("/notes/\(id.uuidString)", method: "DELETE"))
+            _ = try await send("DELETE", "/notes/\(id.uuidString)")
         } catch ServerError.rejected {
             // Already gone there.
         }
     }
 
     func changes(since cursor: Int) async throws -> Changes {
-        let data = try await send(request("/notes", query: [
+        let data = try await send("GET", "/notes", query: [
             URLQueryItem(name: "since", value: String(cursor)),
             URLQueryItem(name: "limit", value: "200"),
-        ]))
+        ])
         return try decode(Changes.self, data)
     }
 }

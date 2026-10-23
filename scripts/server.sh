@@ -66,6 +66,10 @@ if [ "$moonshine" = 1 ] && ! get "$root/server[moonshine]"; then
 fi
 [ "$moonshine" = 1 ] || get "$root/server"
 
+# The watch syncs over Bluetooth, with bless.
+get "$root/server[bluetooth]" ||
+    say "Bluetooth isn't available here, so the watch can't sync with this computer"
+
 if [ "$moonshine" = 1 ]; then
     say "Getting Moonshine's listening model ready"
     "$ember" hear || say "It will download when your first recording comes in"

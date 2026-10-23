@@ -2,22 +2,22 @@
 
 # Ember
 
-Raise your wrist, tap once, say the idea. Ember keeps it on the watch until it can reach home, then hands it to a small server on your own computer. From there, [Flash](https://github.com/Natuworkguy/Flash) can search your ideas, add to them, and act on them, and you can browse them all in the terminal.
+Raise your wrist, tap once, say the idea. Ember keeps it on the watch until it's near your computer, then hands it over Bluetooth to a small server running there. From there, [Flash](https://github.com/Natuworkguy/Flash) can search your ideas, add to them, and act on them, and you can browse them all in the terminal.
 
 Why I built it: [I kept losing ideas, so I built an Apple Watch app that feeds my AI agent](https://dev.to/natuworkguy/i-kept-losing-ideas-so-i-built-an-apple-watch-app-that-feeds-my-ai-agent-1941).
 
 ```
  Apple Watch                      your computer                       Flash
  ───────────                      ─────────────                       ─────
- tap, speak, save  ── Wi-Fi ──▶  ember serve  ◀──── MCP ──────  "what ideas did I
- kept on the watch               notes.db, recordings              have this week about
- until home                      a banner on each new idea         my game engine?"
+ tap, speak, save  ─ Bluetooth ─▶ ember serve ◀──── MCP ──────  "what ideas did I
+ kept on the watch              notes.db, recordings              have this week about
+ until it's near                 a banner on each new idea         my game engine?"
 ```
 
 - **Standalone watch app.** No iPhone app, and no iPhone needed at all. It even works on a Family Setup watch.
-- **Never loses a note.** Every idea is saved on the watch first, in SwiftData, before anything touches the network. It syncs when you get home, and keeps trying until it does.
+- **Never loses a note.** Every idea is saved on the watch first, in SwiftData, before anything leaves it. It syncs over Bluetooth when the watch is near your computer, and keeps trying until it does.
 - **One tap to capture.** The big button, a complication, Siri ("New idea in Ember"), the Smart Stack, or the Action Button on an Ultra.
-- **Local.** The server is one SQLite file on your computer. Recordings are transcribed there too. Nothing goes anywhere else.
+- **Local, and off the network.** The watch talks to your computer over Bluetooth LE, so neither needs Wi-Fi and nothing is open on your network. The server is one SQLite file on your computer. Recordings are transcribed there too. Nothing goes anywhere else.
 - **An MCP server**, `ember mcp`, so Flash (or any MCP client) can read and write your notes, and **`ember`** in the terminal to browse them.
 
 ## How it hears you
@@ -59,7 +59,8 @@ Each new idea gets a banner: in [Isola](https://github.com/Natuworkguy/Isola)'s 
 | --- | --- |
 | `EMBER_TOKEN` | The token. If unset, the one `ember token --save` kept. |
 | `EMBER_DATA` | Where the notes live. `~/.ember` unless set. |
-| `EMBER_HOST`, `EMBER_PORT` | Where to listen. `0.0.0.0:8765` unless set. |
+| `EMBER_BLUETOOTH` | `0` stops answering the watch over Bluetooth (`ember serve --no-bluetooth`). On unless set. |
+| `EMBER_HOST`, `EMBER_PORT` | Where the HTTP API listens, for this computer's own scripts. `127.0.0.1:8765` unless set; `0.0.0.0` opens it to your network too. The watch doesn't use it. |
 | `EMBER_BANNERS` | `1` shows a banner for each new idea: in Isola's island while Isola is running (and its "Show banners from other apps and scripts" is on), otherwise a macOS notification, or `notify-send` on a Linux desktop. `EMBER_ISOLA=1` works too. |
 | `EMBER_MOONSHINE` | Which Moonshine model hears recordings: `tiny` (quickest), `small` (the default) or `medium` (the most accurate). `off` turns it off. |
 | `EMBER_VOSK_MODEL` | A Vosk model folder. Set, Vosk hears recordings instead of Moonshine. |
@@ -85,9 +86,9 @@ EMBER_BUNDLE_ID = com.yourname.ember
 
 A free Apple ID works (Xcode, Settings, Accounts). Its team ID is the Development Team build setting once you pick it in Signing & Capabilities. With a free Apple ID the app runs for 7 days at a time; run `scripts/watch.sh install` again to renew it. Your notes stay.
 
-On the watch, open Ember, go to **Settings**, and type (or say) the pairing code the installer printed, like `2232 4829 136`. That's the whole setup. The code carries your computer's address, so you never type an IP or a `.local` name, and its last digit catches typos. The token goes into the watch's Keychain. For a new code, run `ember pair`.
+With the watch near your computer, open Ember, go to **Settings**, and type (or say) the six-digit pairing code the installer printed, like `482 913`. That's the whole setup: the watch finds your computer over Bluetooth, so there's no address to type, and it doesn't matter what network either is on. The token goes into the watch's Keychain. For a new code, run `ember pair`.
 
-If your router later gives the computer a new address, the watch tries the computer's `.local` name, which it learned when pairing, and keeps whichever answers.
+The first time, the watch asks to use Bluetooth, and so does your Mac, for whatever runs `ember serve` (the Terminal, or Python for the login service). Say yes to both. Bluetooth reaches about 10 metres, through a wall or two. On Linux, `ember serve` needs BlueZ, which most desktops have.
 
 ### 3. Flash, or any MCP client
 
@@ -134,7 +135,7 @@ Only one `ember mcp` runs at a time. Starting another stops the one already runn
   - 👂 the server is still hearing the recording
   - ⚠ the server refused it; tap to see why and try again
 
-When you're away, notes wait on the watch. When the watch joins your home Wi-Fi, Ember syncs. watchOS also wakes it every half hour or so to try in the background, so notes go up even if you never open the app.
+When you're away, notes wait on the watch. When you're back near your computer, Ember syncs over Bluetooth: as soon as you open it, every minute while it's open, and when watchOS wakes it in the background every half hour or so, so notes go up even if you never open the app.
 
 ## The trash
 
@@ -179,7 +180,7 @@ ember hear --install            # add Moonshine, and download its model
 
 ## The API
 
-Every request needs `Authorization: Bearer <token>`, except `/pair`.
+The watch sends these same requests over Bluetooth LE (`server/ember_server/ble.py` describes how). Over HTTP, on `127.0.0.1:8765`, they're there for your own scripts. Every request needs `Authorization: Bearer <token>`, except `/pair`.
 
 | | |
 | --- | --- |

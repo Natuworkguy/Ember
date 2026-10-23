@@ -15,8 +15,9 @@ dependencies = [
 
 [project.optional-dependencies]
 moonshine = ["moonshine-voice>=0.1.5"]
+bluetooth = ["bless>=0.2.6"]
 vosk = ["vosk>=0.3.45"]
-dev = ["ruff>=0.5", "flake8>=7"]
+dev = ["ruff>=0.5", "flake8>=7", "pytest>=8"]
 
 [project.scripts]
 ember = "ember_server.cli:main"
