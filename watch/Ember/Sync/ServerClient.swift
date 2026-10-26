@@ -228,6 +228,7 @@ struct ServerClient {
     struct Paired: Decodable {
         let token: String
         let name: String?
+        let addresses: [String]?
     }
 
     /// The token, for the secret in a code from `ember pair`.

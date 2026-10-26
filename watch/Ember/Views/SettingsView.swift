@@ -68,7 +68,7 @@ struct SettingsView: View {
             } header: {
                 Text("Wi-Fi fallback")
             } footer: {
-                Text("Used when Bluetooth can't reach your computer. Filled in after a sync over Bluetooth, or type your computer's address. The server must run with EMBER_HOST=0.0.0.0.")
+                Text("Used when Bluetooth can't reach your computer. Filled in when you pair over Bluetooth, if the server runs with EMBER_HOST=0.0.0.0; or type your computer's address.")
             }
 
             if paired {
@@ -113,6 +113,11 @@ struct SettingsView: View {
                     return
                 }
                 if before != answer.token { sync.forgetServer() }
+                // Where to reach the server over Wi-Fi, so nothing needs typing.
+                if let given = answer.addresses, !given.isEmpty {
+                    ServerSettings.keep(addresses: given)
+                    address = ServerSettings.load().addresses.first ?? ""
+                }
                 paired = true
                 code = ""
                 good = true

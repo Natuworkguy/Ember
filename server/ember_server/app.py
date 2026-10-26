@@ -217,7 +217,8 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
             )
         # Its name too: the watch falls back on it if the address it
         # paired with changes.
-        return {"token": config.token, "name": local_name()}
+        return {"token": config.token, "name": local_name(),
+                "addresses": config.addresses}
 
     @app.get("/health", dependencies=[Depends(authorized)])
     def health() -> dict:
