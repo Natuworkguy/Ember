@@ -40,19 +40,21 @@ def serve(args: argparse.Namespace) -> None:
         if missing:
             print(missing)
             bluetooth = False
+    open_to_network = args.host not in ("127.0.0.1", "localhost", "::1")
+    addresses = _addresses(args.port) if open_to_network else []
     app = create_app(Config(
         token=configured_token(), data=home(),
         banners="1" in (os.environ.get("EMBER_BANNERS", ""),
                         os.environ.get("EMBER_ISOLA", "")),
-        bluetooth=bluetooth,
+        bluetooth=bluetooth, addresses=addresses,
     ))
     print(f"Ember {__version__}: notes in {home()}")
     if bluetooth:
         print("The watch syncs over Bluetooth, when it is near this "
               "computer.")
-    if args.host not in ("127.0.0.1", "localhost", "::1"):
+    if open_to_network:
         print("The API is open on the network too, at:")
-        for address in _addresses(args.port):
+        for address in addresses:
             print(f"  {address}")
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 

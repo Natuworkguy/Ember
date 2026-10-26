@@ -102,6 +102,8 @@ final class SyncEngine {
             lastSynced = .now
             UserDefaults.standard.set(lastSynced, forKey: "lastSynced")
             status = .synced
+            // Learn where the server is on Wi-Fi, for when Bluetooth can't reach it.
+            try? await client.health()
         } catch ServerError.unreachable(let why) {
             status = .offline(why)
         } catch {

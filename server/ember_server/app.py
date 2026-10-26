@@ -28,7 +28,7 @@ import secrets
 import threading
 import time
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -118,6 +118,10 @@ class Config:
     banners: bool = False
     # Answer the watch over Bluetooth LE (ble.py), beside HTTP.
     bluetooth: bool = False
+    # Where the watch can reach the API over Wi-Fi, when it is open to the
+    # network: told to the watch in /health, so it can fall back on them
+    # when Bluetooth can't reach this computer.
+    addresses: list[str] = field(default_factory=list)
 
 
 class NoteIn(BaseModel):
@@ -218,7 +222,8 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
     @app.get("/health", dependencies=[Depends(authorized)])
     def health() -> dict:
         return {"ok": True, "name": "ember", "version": __version__,
-                "search": "fts5" if store.searchable else "like"}
+                "search": "fts5" if store.searchable else "like",
+                "addresses": config.addresses}
 
     @app.post("/notes", dependencies=[Depends(authorized)])
     def create(note: NoteIn) -> JSONResponse:

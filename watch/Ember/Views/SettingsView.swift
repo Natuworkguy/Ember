@@ -9,6 +9,7 @@ struct SettingsView: View {
     @Environment(SyncEngine.self) private var sync
     @State private var code = ""
     @State private var token = ""
+    @State private var address = ""
     @State private var paired = false
     @State private var working = false
     @State private var message: String?
@@ -57,6 +58,19 @@ struct SettingsView: View {
                     }
             }
 
+            Section {
+                TextField("Address", text: $address)
+                    .onSubmit {
+                        ServerSettings.keep(addresses: [address])
+                        address = ServerSettings.load().addresses.first ?? ""
+                        check()
+                    }
+            } header: {
+                Text("Wi-Fi fallback")
+            } footer: {
+                Text("Used when Bluetooth can't reach your computer. Filled in after a sync over Bluetooth, or type your computer's address. The server must run with EMBER_HOST=0.0.0.0.")
+            }
+
             if paired {
                 Section {
                     Button("Forget this server", role: .destructive) { forget() }
@@ -64,7 +78,11 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("Settings")
-        .onAppear { paired = ServerSettings.load().ready }
+        .onAppear {
+            let settings = ServerSettings.load()
+            paired = settings.ready
+            address = settings.addresses.first ?? ""
+        }
     }
 
     private func pair() {
@@ -134,6 +152,8 @@ struct SettingsView: View {
 
     private func forget() {
         Keychain.write(nil, for: "token")
+        ServerSettings.keep(addresses: [])
+        address = ""
         sync.forgetServer()
         token = ""
         paired = false

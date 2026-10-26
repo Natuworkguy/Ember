@@ -41,6 +41,9 @@ targets:
         WKWatchOnly: true
         NSMicrophoneUsageDescription: Ember records your idea when dictation is not available.
         NSBluetoothAlwaysUsageDescription: Ember syncs your ideas with the Ember server on your own computer, over Bluetooth.
+        NSLocalNetworkUsageDescription: When Bluetooth can't reach your computer, Ember syncs your ideas with it over Wi-Fi.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
         CFBundleURLTypes:
           - CFBundleURLName: $(PRODUCT_BUNDLE_IDENTIFIER)
             CFBundleURLSchemes: [ember]

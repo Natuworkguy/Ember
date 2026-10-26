@@ -63,33 +63,99 @@ enum ServerError: LocalizedError {
     }
 }
 
-/// The token for the server, as kept in the Keychain. Where the server
-/// is needs no keeping: the watch finds it over Bluetooth.
+/// The token for the server, as kept in the Keychain, and where it can be
+/// reached over Wi-Fi when Bluetooth can't find it. The watch learns those
+/// addresses from the server itself, over Bluetooth, or from Settings.
 struct ServerSettings {
     var token: String
+    var addresses: [String]
+
+    static let addressesKey = "wifiAddresses"
 
     static func load() -> ServerSettings {
-        ServerSettings(token: Keychain.read("token") ?? "")
+        ServerSettings(token: Keychain.read("token") ?? "",
+                       addresses: UserDefaults.standard.stringArray(forKey: addressesKey) ?? [])
+    }
+
+    static func keep(addresses: [String]) {
+        let clean = addresses.compactMap(normalized)
+        UserDefaults.standard.set(clean.isEmpty ? nil : clean, forKey: addressesKey)
+    }
+
+    /// "192.168.1.5", "mac.local:8765" or a full http:// address, as a URL
+    /// string with a scheme and port.
+    static func normalized(_ text: String) -> String? {
+        var text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        if !text.contains("://") { text = "http://" + text }
+        guard var parts = URLComponents(string: text), let host = parts.host, !host.isEmpty,
+              parts.scheme == "http" || parts.scheme == "https"
+        else { return nil }
+        if parts.port == nil { parts.port = 8765 }
+        parts.path = ""
+        return parts.string
     }
 
     var ready: Bool { !token.isEmpty }
 }
 
 /// The server's API, over Bluetooth (BluetoothLink): the same requests
-/// as HTTP, answered by the same server.
+/// as HTTP, answered by the same server. When Bluetooth can't reach it,
+/// the same request goes over Wi-Fi, to an address the server gave.
 struct ServerClient {
     let token: String
     var timeout: TimeInterval = 20
+    var addresses: [String] = []
 
     init?(_ settings: ServerSettings = .load(), timeout: TimeInterval = 20) {
         guard settings.ready else { return nil }
         self.token = settings.token
         self.timeout = timeout
+        self.addresses = settings.addresses
     }
 
     init(token: String, timeout: TimeInterval = 20) {
         self.token = token
         self.timeout = timeout
+        self.addresses = ServerSettings.load().addresses
+    }
+
+    private struct Answer {
+        let status: Int
+        let body: Data
+    }
+
+    private static let session: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.waitsForConnectivity = false
+        config.allowsExpensiveNetworkAccess = true
+        return URLSession(configuration: config)
+    }()
+
+    /// The request over Wi-Fi, to each address in turn.
+    private func overWiFi(_ method: String, _ path: String, query: String,
+                          headers: [String: String], body: Data,
+                          timeout: TimeInterval) async throws -> Answer {
+        var last = "Bluetooth and Wi-Fi couldn't reach your computer."
+        for address in addresses {
+            guard var parts = URLComponents(string: address) else { continue }
+            parts.path = path
+            parts.percentEncodedQuery = query.isEmpty ? nil : query
+            guard let url = parts.url else { continue }
+            var request = URLRequest(url: url, timeoutInterval: timeout)
+            request.httpMethod = method
+            for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
+            do {
+                let (data, response) = try await method == "GET" || method == "DELETE"
+                    ? Self.session.data(for: request)
+                    : Self.session.upload(for: request, from: body)
+                guard let http = response as? HTTPURLResponse else { continue }
+                return Answer(status: http.statusCode, body: data)
+            } catch {
+                last = "Over Wi-Fi: \(error.localizedDescription)"
+            }
+        }
+        throw ServerError.unreachable(last)
     }
 
     private func send(_ method: String, _ path: String, query: [URLQueryItem] = [],
@@ -100,15 +166,21 @@ struct ServerClient {
         if let kind { headers["Content-Type"] = kind }
         var parts = URLComponents()
         parts.queryItems = query.isEmpty ? nil : query
-        let answer: BluetoothLink.Answer
+        let query = parts.percentEncodedQuery ?? ""
+        let answer: Answer
         do {
             // A recording takes longer to send: about 4 KB a second.
-            answer = try await BluetoothLink.shared.send(
-                method, path, query: parts.percentEncodedQuery ?? "",
+            let got = try await BluetoothLink.shared.send(
+                method, path, query: query,
                 headers: headers, body: body,
                 timeout: timeout + Double(body.count) / 4_000)
+            answer = Answer(status: got.status, body: got.body)
         } catch let error as BluetoothLink.LinkError {
-            throw ServerError.unreachable(error.localizedDescription)
+            guard !addresses.isEmpty else {
+                throw ServerError.unreachable(error.localizedDescription)
+            }
+            answer = try await overWiFi(method, path, query: query, headers: headers,
+                                        body: body, timeout: timeout)
         }
         switch answer.status {
         case 200..<300: return answer.body
@@ -139,8 +211,18 @@ struct ServerClient {
 
     // MARK: The calls
 
+    struct Health: Decodable {
+        let addresses: [String]?
+    }
+
+    /// Whether the server and the token work. Keeps the Wi-Fi addresses
+    /// the server gives, for when Bluetooth can't reach it.
     func health() async throws {
-        _ = try await send("GET", "/health")
+        let data = try await send("GET", "/health")
+        if let given = (try? JSONDecoder().decode(Health.self, from: data))?.addresses,
+           !given.isEmpty {
+            ServerSettings.keep(addresses: given)
+        }
     }
 
     struct Paired: Decodable {
