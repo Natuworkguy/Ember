@@ -185,7 +185,7 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
                 made = Peripheral(app)
                 try:
                     await made.start()
-                except Exception as exc:  # noqa: BLE001  (said, and HTTP goes on)
+                except Exception as exc:  # noqa: BLE001  (HTTP goes on)
                     print(f"Bluetooth could not start: {exc}", flush=True)
                     return
                 peripheral = made
