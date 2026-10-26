@@ -21,6 +21,7 @@ the recordings in audio/.
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import json
 import os
@@ -172,17 +173,28 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
     async def lifespan(_: FastAPI):
         threading.Thread(target=warm, name="ember-warm", daemon=True).start()
         peripheral = None
+        starting = None
         if config.bluetooth:
             from .ble import Peripheral
 
-            peripheral = Peripheral(app)
-            try:
-                await peripheral.start()
+            async def start_bluetooth() -> None:
+                # In the background: HTTP answers at once, even where
+                # Bluetooth is slow to start, or never does (no radio, or
+                # no permission yet).
+                nonlocal peripheral
+                made = Peripheral(app)
+                try:
+                    await made.start()
+                except Exception as exc:  # noqa: BLE001  (said, and HTTP goes on)
+                    print(f"Bluetooth could not start: {exc}", flush=True)
+                    return
+                peripheral = made
                 print("Bluetooth: waiting for the watch.", flush=True)
-            except Exception as exc:  # noqa: BLE001  (said, and HTTP goes on)
-                print(f"Bluetooth could not start: {exc}", flush=True)
-                peripheral = None
+
+            starting = asyncio.create_task(start_bluetooth())
         yield
+        if starting is not None and not starting.done():
+            starting.cancel()
         if peripheral is not None:
             await peripheral.stop()
         store.close()
