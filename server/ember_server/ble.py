@@ -261,7 +261,7 @@ class Peripheral:
         )
 
         self.loop = asyncio.get_running_loop()
-        server = BlessServer(name=NAME, loop=self.loop)
+        server = await self._made(BlessServer)
         server.read_request_func = self._read
         server.write_request_func = self._write
         await server.add_new_service(SERVICE)
@@ -277,6 +277,31 @@ class Peripheral:
         )
         await server.start()
         self.server = server
+
+    async def _made(self, kind: Any) -> Any:
+        """KIND's server, made off the event loop: on macOS, bless waits
+        there, with no timeout, for Bluetooth to power on, which on a
+        computer with none (or no permission yet) is never."""
+
+        loop = self.loop
+        made: asyncio.Future = loop.create_future()
+
+        def hand(how: Callable[[Any], None], value: Any) -> None:
+            if not made.done():  # not cancelled meanwhile
+                how(value)
+
+        def make() -> None:
+            try:
+                server = kind(name=NAME, loop=loop)
+            except Exception as exc:  # noqa: BLE001  (handed on)
+                loop.call_soon_threadsafe(hand, made.set_exception, exc)
+            else:
+                loop.call_soon_threadsafe(hand, made.set_result, server)
+
+        # A daemon, so a wait that never ends can't hold up quitting.
+        threading.Thread(target=make, name="ember-bluetooth",
+                         daemon=True).start()
+        return await made
 
     async def stop(self) -> None:
         if self.server is not None:
