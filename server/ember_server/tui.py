@@ -1,7 +1,9 @@
 """Your notes, full screen in the terminal: `ember`, or `ember notes`.
 
 Grouped by day, newest first, with the one you're on shown whole below.
-Ideas from the watch slide in while it's open.
+Ideas from the watch slide in while it's open. With listen along on, a
+recording from the watch plays as it arrives, while it's still being
+heard. Refresh and listen along are buttons in the corner too.
 
   ↑ ↓  j k     move              /     search, as you type
   enter        read it whole     t     pick a tag
@@ -9,7 +11,9 @@ Ideas from the watch slide in while it's open.
   #            change tags       d d   move to the trash
   c            copy the text     d f   delete forever
   p            play its recording
-  T            the trash         u     restore, in the trash
+  l            listen along: play recordings as they come in
+  r            refresh           T     the trash
+  u            restore, in the trash
   ?            these keys        q     quit
 """
 
@@ -41,6 +45,7 @@ LOGO_WIDTH = max(len(f) + len(w) for f, w in LOGO)
 
 POLL_SECONDS = 1.5
 FRESH_SECONDS = 4.0
+WAIT_FOR_AUDIO = 30.0
 
 ORANGE, AMBER, DIM, PICKED, GOOD, BAD, FRESH = range(1, 8)
 
@@ -120,7 +125,7 @@ def shown_text(note: dict) -> str:
     if note["text"]:
         return note["text"]
     if note["transcription"] == "pending":
-        return "(a recording, being heard)"
+        return "(a recording, being heard: p plays it)"
     return "(a recording that could not be heard)"
 
 
@@ -144,6 +149,10 @@ class Browser:
         self.rev = -1
         self.started = False
         self.trash = False     # showing the trash, not the notes
+        self.listening = False  # play recordings as they come in
+        self.to_play: dict[str, float] = {}  # id -> until when to wait
+        # Where the header's buttons are: name -> (row, first, last column).
+        self.buttons: dict[str, tuple[int, int, int]] = {}
 
     # --- Data -------------------------------------------------------------
 
@@ -158,6 +167,22 @@ class Browser:
         if self.started:
             for new in ids - self.seen:
                 self.fresh[new] = time.monotonic() + FRESH_SECONDS
+            if self.listening and not self.trash:
+                # A note can come before its recording is saved: it
+                # waits a while for it.
+                for new in ids - self.seen:
+                    self.to_play[new] = time.monotonic() + WAIT_FOR_AUDIO
+        if self.to_play:
+            # The oldest first, if several came at once.
+            for note in sorted((n for n in self.notes
+                                if n["id"] in self.to_play),
+                               key=lambda n: n["created_at"]):
+                path = self.store.audio_path(note["id"])
+                if path and path.exists():
+                    del self.to_play[note["id"]]
+                    self.play_note(note, quiet=True)
+            self.to_play = {k: t for k, t in self.to_play.items()
+                            if t > time.monotonic()}
         self.seen |= ids
         self.started = True
         self.rows, self.labels = [], {}
@@ -256,7 +281,26 @@ class Browser:
                          curses.color_pair(ORANGE) | curses.A_BOLD)
             self.put(len(LOGO) - 1, LOGO_WIDTH + 4, about,
                      curses.color_pair(DIM))
+        self.draw_buttons(0, w)
         self.put(top - 1, 0, "─" * w, curses.color_pair(DIM))
+
+    def draw_buttons(self, y: int, w: int) -> None:
+        """Refresh and listen along, at the top right, to click."""
+
+        self.buttons = {}
+        x = w - 1
+        shown = [("listen", " ♪ Listen along: "
+                  + ("on " if self.listening else "off "), self.listening),
+                 ("refresh", " ↻ Refresh ", False)]
+        for name, label, on in shown:
+            x -= width(label)
+            if x < 30:
+                break
+            look = curses.color_pair(PICKED) | (
+                curses.color_pair(GOOD) | curses.A_BOLD if on else 0)
+            self.put(y, x, label, look)
+            self.buttons[name] = (y, x, x + width(label) - 1)
+            x -= 1
 
     def draw_list(self, y0: int, y1: int, w: int) -> None:
         room = y1 - y0
@@ -577,10 +621,15 @@ class Browser:
         self.say("No clipboard command here (pbcopy, wl-copy, xclip).", False)
 
     def play(self) -> None:
-        note = self.current
+        self.play_note(self.current)
+
+    def play_note(self, note: Optional[dict], quiet: bool = False) -> None:
+        """Play NOTE's recording, heard yet or not."""
+
         path = note and self.store.audio_path(note["id"])
         if not path or not path.exists():
-            self.say("That note has no recording.", False)
+            if not quiet:
+                self.say("That note has no recording.", False)
             return
         player = {"Darwin": ["afplay"], "Linux": ["paplay"]}.get(
             platform.system(), [])
@@ -592,7 +641,28 @@ class Browser:
         subprocess.Popen(  # nosec B603
             [*player, str(path)], stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL)
-        self.say("Playing.")
+        self.say("Playing a new recording." if quiet else "Playing.")
+
+    def refresh(self) -> None:
+        self.load()
+        count = len(self.notes)
+        self.say(f"Up to date: {count} note{'s' if count != 1 else ''}.")
+
+    def toggle_listening(self) -> None:
+        self.listening = not self.listening
+        self.say("Listening along: recordings play as they come in."
+                 if self.listening else "Not listening along.")
+
+    def click(self) -> None:
+        try:
+            _, x, y, _, _ = curses.getmouse()
+        except curses.error:
+            return
+        for name, (row, first, last) in self.buttons.items():
+            if y == row and first <= x <= last:
+                (self.refresh if name == "refresh"
+                 else self.toggle_listening)()
+                return
 
     def help(self) -> None:
         self.draw()
@@ -613,6 +683,7 @@ class Browser:
     # --- Running ----------------------------------------------------------
 
     def run(self) -> None:
+        curses.mousemask(curses.BUTTON1_CLICKED | curses.BUTTON1_PRESSED)
         self.load()
         self.screen.timeout(int(POLL_SECONDS * 1000))
         last_poll = time.monotonic()
@@ -684,7 +755,11 @@ class Browser:
         elif key == "?":
             self.help()
         elif key == "r":
-            self.load()
+            self.refresh()
+        elif key == "l":
+            self.toggle_listening()
+        elif key == curses.KEY_MOUSE:
+            self.click()
         return None
 
 
