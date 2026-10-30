@@ -65,6 +65,26 @@ def test_a_note_goes_up_and_comes_back(app):
     assert [n["text"][:6] for n in json.loads(body)["notes"]] == ["a game"]
 
 
+def test_a_note_edited_on_the_watch_changes_and_takes_new_tags(app):
+    note_id = "0b1e8c52-5f4f-4b0b-9a3e-1b2c3d4e5f61"
+    note = json.dumps({"id": note_id, "text": "buy milk #errand",
+                       "created_at": "2026-10-23T09:00:00Z",
+                       "source": "watch", "tags": ["errand"],
+                       "audio": False})
+    _, body = through(app, signed("POST", "/notes", note.encode()))
+    before = json.loads(body)["rev"]
+
+    head, body = through(app, signed(
+        "PATCH", f"/notes/{note_id}",
+        json.dumps({"text": "buy oat milk #shopping",
+                    "tags": ["shopping"]}).encode()))
+    changed = json.loads(body)
+    assert head["s"] == 200
+    assert changed["text"] == "buy oat milk #shopping"
+    assert changed["tags"] == ["shopping"]
+    assert changed["rev"] > before
+
+
 def test_the_token_is_still_needed(app):
     head, _ = through(app, ble.pack_request("GET", "/health"))
     assert head["s"] == 401

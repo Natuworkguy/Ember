@@ -195,6 +195,13 @@ struct NoteDetailView: View {
                 if note.syncState == .failed {
                     Button("Try again") { sync.retry(note) }
                 }
+                if note.transcription != "pending" || note.syncState != .synced {
+                    NavigationLink {
+                        NoteEditView(note: note)
+                    } label: {
+                        Label(note.text.isEmpty ? "Add words" : "Edit", systemImage: "pencil")
+                    }
+                }
                 Button("Delete", role: .destructive) {
                     NoteStore.delete(note)
                     sync.syncSoon()
@@ -203,5 +210,41 @@ struct NoteDetailView: View {
             }
         }
         .navigationTitle(note.createdAt.formatted(.dateTime.weekday(.abbreviated).hour().minute()))
+    }
+}
+
+/// A note's words, to change: typed, dictated or scribbled, as watchOS
+/// offers. Saved here at once and sent on the next sync; hashtags in the
+/// words become its tags.
+struct NoteEditView: View {
+    @Environment(SyncEngine.self) private var sync
+    @Environment(\.dismiss) private var dismiss
+    let note: Note
+    @State private var draft = ""
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                TextField("The note", text: $draft, axis: .vertical)
+                    .lineLimit(3...12)
+                if !Note.hashtags(in: draft).isEmpty {
+                    Text(Note.hashtags(in: draft).map { "#" + $0 }.joined(separator: " "))
+                        .font(.caption2)
+                        .foregroundStyle(Theme.ember)
+                }
+                Button {
+                    NoteStore.edit(note, text: draft)
+                    sync.syncSoon()
+                    dismiss()
+                } label: {
+                    Label("Save", systemImage: "checkmark")
+                }
+                .tint(Theme.ember)
+                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                          || draft == note.text)
+            }
+        }
+        .navigationTitle("Edit")
+        .onAppear { draft = note.text }
     }
 }

@@ -35,6 +35,9 @@ final class Note {
     var lastError: String?
     var attempts: Int
     var rev: Int
+    /// Its words were changed here since the server last had them: they
+    /// go up on the next sync.
+    var edited: Bool = false
 
     init(
         id: UUID = UUID(), text: String, createdAt: Date = .now,
@@ -120,6 +123,25 @@ enum NoteStore {
         context.insert(note)
         try context.save()
         return note
+    }
+
+    /// Change a note's words: here at once, its tags with them, and on the
+    /// server when it next syncs. A note not on the server yet just goes
+    /// up with its new words.
+    @MainActor
+    static func edit(_ note: Note, text: String) {
+        let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard words != note.text else { return }
+        note.text = words
+        note.tags = Note.hashtags(in: words)
+        note.updatedAt = .now
+        if note.transcription == "pending" { note.transcription = "none" }
+        if note.onServer {
+            note.edited = true
+            if note.syncState != .deleting { note.syncState = .waiting }
+        }
+        note.lastError = nil
+        try? container.mainContext.save()
     }
 
     /// Delete a note: here at once, and on the server when it next syncs.

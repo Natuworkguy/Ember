@@ -259,6 +259,15 @@ struct ServerClient {
         return try decode(RemoteNote.self, data)
     }
 
+    /// Change a note's words on the server, and its tags to the ones in
+    /// them: a hashtag taken out of the words is taken off the note.
+    func update(_ id: UUID, text: String, tags: [String]) async throws -> RemoteNote {
+        let data = try await send("PATCH", "/notes/\(id.uuidString)",
+                                  body: Self.json(["text": text, "tags": tags]),
+                                  kind: "application/json")
+        return try decode(RemoteNote.self, data)
+    }
+
     func delete(_ id: UUID) async throws {
         do {
             _ = try await send("DELETE", "/notes/\(id.uuidString)")

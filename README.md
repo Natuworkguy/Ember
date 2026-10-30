@@ -134,6 +134,7 @@ Only one `ember mcp` runs at a time. Starting another stops the one already runn
   - ✓ on the server
   - 👂 the server is still hearing the recording
   - ⚠ the server refused it; tap to see why and try again
+- **Editing:** tap a note, then Edit, to change its words by typing, dictating or scribbling (Add words, for a recording with none yet). Hashtags in the new words become its tags. The change is saved on the watch at once and goes to your computer on the next sync. A recording the server is still hearing can be edited once its words are back.
 
 When you're away, notes wait on the watch. When you're back near your computer, Ember syncs over Bluetooth: as soon as you open it, every minute while it's open, and when watchOS wakes it in the background every half hour or so, so notes go up even if you never open the app.
 

@@ -184,9 +184,16 @@ final class SyncEngine {
             return
         }
         if !note.onServer {
+            // Sent with its words as they are now, edited or not.
             let remote = try await client.create(Outgoing(note))
             note.onServer = true
             note.rev = remote.rev
+            note.edited = false
+        } else if note.edited {
+            let remote = try await client.update(note.id, text: note.text, tags: note.tags)
+            note.rev = remote.rev
+            note.tags = remote.tags
+            note.edited = false
         }
         if !note.audioSent, let file = note.audioFile {
             let url = NoteStore.recording(file)
