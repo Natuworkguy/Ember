@@ -174,12 +174,10 @@ struct NoteDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 8) {
-                Text(note.title)
+                Text(note.text.isEmpty ? AttributedString(note.title) : Tagged.words(note.text))
                     .foregroundStyle(note.text.isEmpty ? .secondary : .primary)
                 if !note.tags.isEmpty {
-                    Text(note.tags.map { "#" + $0 }.joined(separator: " "))
-                        .font(.caption)
-                        .foregroundStyle(Theme.ember)
+                    TagChips(tags: note.tags)
                 }
                 HStack(spacing: 4) {
                     SyncBadge(note: note)
@@ -227,11 +225,7 @@ struct NoteEditView: View {
             VStack(alignment: .leading, spacing: 10) {
                 TextField("The note", text: $draft, axis: .vertical)
                     .lineLimit(3...12)
-                if !Note.hashtags(in: draft).isEmpty {
-                    Text(Note.hashtags(in: draft).map { "#" + $0 }.joined(separator: " "))
-                        .font(.caption2)
-                        .foregroundStyle(Theme.ember)
-                }
+                TagChips(tags: Note.hashtags(in: draft))
                 Button {
                     NoteStore.edit(note, text: draft)
                     sync.syncSoon()

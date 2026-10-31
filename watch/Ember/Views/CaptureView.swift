@@ -8,6 +8,60 @@ enum Theme {
         startPoint: .top, endPoint: .bottom)
 }
 
+/// Hashtags set apart in the words they are in: ember, bold, on a soft
+/// ember wash, so you see what will become a tag before you save.
+enum Tagged {
+    static func words(_ text: String) -> AttributedString {
+        var styled = AttributedString()
+        var word = ""
+        func flush() {
+            guard !word.isEmpty else { return }
+            var piece = AttributedString(word)
+            if word.hasPrefix("#"), word.count > 1 {
+                piece.foregroundColor = Theme.ember
+                piece.backgroundColor = Theme.ember.opacity(0.18)
+                piece.font = .body.weight(.semibold)
+            }
+            styled += piece
+            word = ""
+        }
+        for ch in text {
+            if ch.isWhitespace {
+                flush()
+                styled += AttributedString(String(ch))
+            } else {
+                word.append(ch)
+            }
+        }
+        flush()
+        return styled
+    }
+}
+
+/// The tags a note will have, as little ember pills.
+struct TagChips: View {
+    let tags: [String]
+
+    var body: some View {
+        if !tags.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 5) {
+                    ForEach(tags, id: \.self) { tag in
+                        Text("#" + tag)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(Theme.ember)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(Theme.ember.opacity(0.2)))
+                    }
+                }
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Tags: " + tags.joined(separator: ", "))
+        }
+    }
+}
+
 /// A small round button's face: a white symbol on a soft disc, readable
 /// whatever the tint.
 struct RoundIcon: View {
@@ -185,10 +239,13 @@ struct CaptureView: View {
     /// Start what Siri, the complication or a shortcut asked for.
     private func answer(_ request: CaptureRequests.Kind?) async {
         guard let request else { return }
+        // Let Ember finish coming up first, and back out to this screen
+        // when it was somewhere else: that screen's capture view goes away,
+        // and with it this task, so only the one left standing answers.
+        try? await Task.sleep(for: .milliseconds(500))
+        guard !Task.isCancelled, requests.pending == request else { return }
         requests.pending = nil
         draft = nil
-        // Let Ember finish coming up first.
-        try? await Task.sleep(for: .milliseconds(500))
         switch request {
         case .record:
             recording = true
@@ -209,9 +266,12 @@ struct ReviewView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                Text(text)
-                    .font(.body)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(Tagged.words(text))
+                        .font(.body)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    TagChips(tags: Note.hashtags(in: text))
+                }
             }
             .navigationTitle("Your idea")
             .toolbar {
