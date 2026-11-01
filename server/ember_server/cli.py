@@ -47,6 +47,9 @@ def serve(args: argparse.Namespace) -> None:
         banners="1" in (os.environ.get("EMBER_BANNERS", ""),
                         os.environ.get("EMBER_ISOLA", "")),
         bluetooth=bluetooth, addresses=addresses,
+        # Asked again at each sync, so a new address reaches the watch.
+        find_addresses=(lambda: _addresses(args.port))
+        if open_to_network else None,
     ))
     print(f"Ember {__version__}: notes in {home()}")
     if bluetooth:

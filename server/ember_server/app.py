@@ -31,7 +31,7 @@ import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -123,6 +123,18 @@ class Config:
     # network: told to the watch in /health, so it can fall back on them
     # when Bluetooth can't reach this computer.
     addresses: list[str] = field(default_factory=list)
+    # Finds them again, as they are now, when given: a computer that moved
+    # to another network, or was given a new address on this one, says so
+    # at the watch's next sync.
+    find_addresses: Optional[Callable[[], list[str]]] = None
+
+    def where(self) -> list[str]:
+        if self.find_addresses is None:
+            return self.addresses
+        try:
+            return self.find_addresses() or self.addresses
+        except OSError:
+            return self.addresses
 
 
 class NoteIn(BaseModel):
@@ -230,13 +242,13 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
         # Its name too: the watch falls back on it if the address it
         # paired with changes.
         return {"token": config.token, "name": local_name(),
-                "addresses": config.addresses}
+                "addresses": config.where()}
 
     @app.get("/health", dependencies=[Depends(authorized)])
     def health() -> dict:
         return {"ok": True, "name": "ember", "version": __version__,
                 "search": "fts5" if store.searchable else "like",
-                "addresses": config.addresses}
+                "addresses": config.where()}
 
     @app.post("/notes", dependencies=[Depends(authorized)])
     def create(note: NoteIn) -> JSONResponse:

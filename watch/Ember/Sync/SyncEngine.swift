@@ -97,13 +97,18 @@ final class SyncEngine {
         }
         status = .syncing
         do {
-            try await push(client)
-            try await pull(client)
+            // Where the server is on Wi-Fi now, first, every sync: over
+            // Bluetooth, or any address that still answers. A computer
+            // given a new address on the network is found again at once,
+            // not only after a sync that already got through.
+            let found = (try? await client.health()) != nil
+            let current = found ? (ServerClient() ?? client) : client
+            try await push(current)
+            try await pull(current)
             lastSynced = .now
             UserDefaults.standard.set(lastSynced, forKey: "lastSynced")
             status = .synced
-            // Learn where the server is on Wi-Fi, for when Bluetooth can't reach it.
-            try? await client.health()
+            if !found { try? await current.health() }
         } catch ServerError.unreachable(let why) {
             status = .offline(why)
         } catch {

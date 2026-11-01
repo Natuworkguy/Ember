@@ -115,3 +115,27 @@ def test_too_much_is_refused(app):
 
 def test_nothing_asked_reads_as_the_end():
     assert ble.Link(lambda m: None).read() == b"E"
+
+
+def test_health_says_where_the_server_is_now(tmp_path):
+    where = ["http://old.local:8765"]
+    app = create_app(Config(token=TOKEN, data=tmp_path,
+                            addresses=list(where),
+                            find_addresses=lambda: list(where)))
+    head, body = through(app, signed("GET", "/health"))
+    assert head["s"] == 200
+    assert json.loads(body)["addresses"] == ["http://old.local:8765"]
+
+    # A new address on the network: the next sync is told it.
+    where[:] = ["http://192.168.1.31:8765"]
+    _, body = through(app, signed("GET", "/health"))
+    assert json.loads(body)["addresses"] == ["http://192.168.1.31:8765"]
+
+
+def test_where_falls_back_on_what_it_knew(tmp_path):
+    def broken():
+        raise OSError("no network")
+
+    config = Config(token=TOKEN, data=tmp_path, addresses=["http://a:1"],
+                    find_addresses=broken)
+    assert config.where() == ["http://a:1"]
