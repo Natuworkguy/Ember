@@ -348,6 +348,32 @@ def show(args: argparse.Namespace) -> None:
         print(_paint(" ".join("#" + t for t in note["tags"]), "38;5;214"))
     print()
     print(shown_text(note))
+    if note.get("images"):
+        store = _store()
+        print()
+        for name in note["images"]:
+            print(_paint("picture: " + str(store.images_dir(note["id"]) / name), "2"))
+
+
+def attach(args: argparse.Namespace) -> None:
+    """Pictures kept with a note: ember attach ID photo.jpg [more.png]; --remove NAME takes one off."""
+
+    from .store import NoteError
+
+    store = _store()
+    note = _one(store, args.id)
+    try:
+        if args.remove:
+            note = store.remove_image(note["id"], args.remove)
+            print(f"Took {args.remove} off.")
+        for path in args.files:
+            data = Path(path).expanduser().read_bytes()
+            note = store.add_image(note["id"], data)
+            print(f"Attached {Path(path).name}.")
+    except (NoteError, OSError) as exc:
+        sys.exit(str(exc))
+    count = len(note["images"])
+    print(f"{note['id'][:8]} has {count} picture{'s' if count != 1 else ''}.")
 
 
 def edit(args: argparse.Namespace) -> None:
@@ -486,6 +512,12 @@ def main(argv: list[str] | None = None) -> None:
     one = commands.add_parser("show", help="show one note, by its id")
     one.add_argument("id", help="its id, or the start of it")
     one.set_defaults(go=show)
+
+    pics = commands.add_parser("attach", help="keep pictures with a note (PNG, JPEG, GIF, WebP, HEIC)")
+    pics.add_argument("id", help="its id, or the start of it")
+    pics.add_argument("files", nargs="*", help="picture files to attach")
+    pics.add_argument("--remove", default="", help="the name of a picture to take off")
+    pics.set_defaults(go=attach)
 
     change = commands.add_parser(
         "edit", help="change a note: in $EDITOR, or give the new text")

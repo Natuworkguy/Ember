@@ -13,6 +13,7 @@ holding on.
 from __future__ import annotations
 
 import atexit
+import base64
 import json
 import os
 import signal
@@ -74,10 +75,20 @@ TOOLS: list[dict] = [
     },
     {
         "name": "note",
-        "description": "One Ember note, whole, by its id from search.",
+        "description": "One Ember note, whole, by its id from search, with its pictures.",
         "inputSchema": {"type": "object", "properties": {"id": ID},
                         "required": ["id"]},
         "annotations": {"title": "Read an Ember note", "readOnlyHint": True},
+    },
+    {
+        "name": "attach_image",
+        "description": "Keep a picture with an Ember note: a file on this computer (PNG, JPEG, GIF, WebP or "
+        "HEIC). note shows a note's pictures.",
+        "inputSchema": {"type": "object", "properties": {
+            "id": ID, "path": {"type": "string", "description": "The picture file's path on this computer."},
+        }, "required": ["id", "path"]},
+        "annotations": {"title": "Attach a picture to an Ember note", "readOnlyHint": False,
+                        "destructiveHint": False},
     },
     {
         "name": "tags",
@@ -156,7 +167,9 @@ def line(note: dict) -> str:
         "(a recording, not yet heard)"
         if note.get("transcription") == "pending"
         else "(a recording that could not be heard)")
-    return f"{head}{'  ' + tags if tags else ''}\n{text}"
+    pics = len(note.get("images") or [])
+    more = f"\n({pics} picture{'s' if pics != 1 else ''} attached)" if pics else ""
+    return f"{head}{'  ' + tags if tags else ''}\n{text}{more}"
 
 
 class Tools:
@@ -168,6 +181,7 @@ class Tools:
             "search": self.search, "note": self.note, "tags": self.tags,
             "save": self.save, "change": self.change, "delete": self.delete,
             "restore": self.restore, "delete_forever": self.delete_forever,
+            "attach_image": self.attach_image,
         }
 
     def _id(self, args: dict, trashed: bool = False) -> str:
@@ -193,8 +207,27 @@ class Tools:
         count = f"{len(found)} note{'s' if len(found) != 1 else ''}"
         return count + ":\n\n" + "\n\n".join(map(line, found))
 
-    def note(self, args: dict) -> str:
-        return line(self.store.get(self._id(args)))
+    def note(self, args: dict):
+        """The note's text, and its pictures as pictures, so the model sees them."""
+
+        note = self.store.get(self._id(args))
+        content: list[dict] = [{"type": "text", "text": line(note)}]
+        kinds = {"png": "image/png", "jpg": "image/jpeg", "gif": "image/gif", "webp": "image/webp",
+                 "heic": "image/heic"}
+        for name in note.get("images") or []:
+            path = self.store.image_path(note["id"], name)
+            if path is not None and path.is_file():
+                content.append({"type": "image", "data": base64.b64encode(path.read_bytes()).decode(),
+                                "mimeType": kinds.get(path.suffix.lstrip("."), "image/png")})
+        return content if len(content) > 1 else content[0]["text"]
+
+    def attach_image(self, args: dict) -> str:
+        path = os.path.expanduser(str(args.get("path") or ""))
+        if not path or not os.path.isfile(path):
+            raise NoteError(f"There is no file {path!r}.")
+        with open(path, "rb") as f:
+            note = self.store.add_image(self._id(args), f.read())
+        return "Attached.\n" + line(note)
 
     def tags(self, _: dict) -> str:
         found = self.store.tags()
@@ -270,12 +303,12 @@ def answer(tools: Tools, message: dict) -> dict | None:
             return error(-32602, f"No tool called {name!r}.")
         args = params.get("arguments")
         try:
-            text, failed = tools.run[name](
+            said, failed = tools.run[name](
                 args if isinstance(args, dict) else {}), False
-        except (NoteError, ValueError, TypeError) as exc:
-            text, failed = str(exc), True
-        return ok({"content": [{"type": "text", "text": text}],
-                   "isError": failed})
+        except (NoteError, ValueError, TypeError, OSError) as exc:
+            said, failed = str(exc), True
+        content = said if isinstance(said, list) else [{"type": "text", "text": said}]
+        return ok({"content": content, "isError": failed})
     return error(-32601, f"No method {method!r}.")
 
 

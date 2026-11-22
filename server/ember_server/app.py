@@ -44,6 +44,7 @@ from .store import MAX_TEXT, NoteError, Store
 from .transcribe import Unheard, transcribe, warm
 
 MAX_AUDIO = 25 * 1024 * 1024
+MAX_IMAGE = 15 * 1024 * 1024
 PAIR_MINUTES = 10
 PAIR_TRIES = 5
 _pairing = threading.Lock()
@@ -342,6 +343,31 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
         if path is None or not path.is_file():
             raise HTTPException(404, "That note has no recording.")
         return FileResponse(path, media_type="audio/wav")
+
+    @app.post("/notes/{note_id}/images", dependencies=[Depends(authorized)])
+    async def add_image(note_id: str, request: Request) -> dict:
+        """A picture for the note, sent as the request's body."""
+
+        body = bytearray()
+        async for piece in request.stream():
+            body += piece
+            if len(body) > MAX_IMAGE:
+                raise HTTPException(413, "A picture can be at most 15 MB.")
+        if not body:
+            raise NoteError("No picture was sent.")
+        return store.add_image(note_id, bytes(body))
+
+    @app.get("/notes/{note_id}/images/{name}", dependencies=[Depends(authorized)])
+    def get_image(note_id: str, name: str) -> FileResponse:
+        path = store.image_path(note_id, name)
+        if path is None or not path.is_file():
+            raise HTTPException(404, "That note has no such picture.")
+        kinds = {"png": "image/png", "jpg": "image/jpeg", "gif": "image/gif", "webp": "image/webp", "heic": "image/heic"}
+        return FileResponse(path, media_type=kinds.get(path.suffix.lstrip("."), "application/octet-stream"))
+
+    @app.delete("/notes/{note_id}/images/{name}", dependencies=[Depends(authorized)])
+    def remove_image(note_id: str, name: str) -> dict:
+        return store.remove_image(note_id, name)
 
     @app.get("/tags", dependencies=[Depends(authorized)])
     def tags() -> dict:

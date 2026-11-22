@@ -142,6 +142,10 @@ When you're away, notes wait on the watch. When you're back near your computer, 
 
 Deleting a note, on the watch, in the terminal or through MCP, moves it to the trash on your computer. It's gone from every list, search and the watch, but its words and recording are kept until you restore it or delete it forever. Deleting forever takes it out of the database and its recording off the disk; only its id is kept, so the watch hears it's gone.
 
+## Pictures
+
+An idea can keep pictures with it: a sketch, a screenshot, a photo of a whiteboard. `ember attach <id> sketch.png` adds them from the terminal (PNG, JPEG, GIF, WebP or HEIC, up to 12 on a note), and `ember show <id>` lists them. Ask Flash ("put this screenshot on my logo idea") and it attaches them through MCP; when it reads a note, it sees its pictures too. They're kept on your computer, in `~/.ember/images`, and go when the note is deleted forever.
+
 ## Your notes in the terminal
 
 Run `ember` on its own and your notes open full screen: grouped by day, newest first, with the one you're on shown whole below. Ideas from your watch slide in while it's open.
@@ -193,6 +197,8 @@ The watch sends these same requests over Bluetooth LE (`server/ember_server/ble.
 | `GET /trash`, `DELETE /trash` | Lists what's in the trash, or deletes all of it forever. |
 | `PUT /notes/{id}/audio` | Uploads a note's WAV recording. The server transcribes it in the background. |
 | `GET /notes/{id}/audio` | Gets the recording back. |
+| `POST /notes/{id}/images` | Attaches a picture, sent as the body. The note comes back with its `images`, each a file name. |
+| `GET` / `DELETE /notes/{id}/images/{name}` | Gets one picture, or takes it off. |
 | `GET /tags`, `GET /health` | |
 | `POST /pair` | Trades the secret in a code from `ember pair` for the token, and the computer's `.local` name. A code works once, for ten minutes, and five wrong tries use it up. |
 
@@ -202,7 +208,7 @@ A note looks like this:
 {
   "id": "4a9c…", "text": "Chunked terrain streaming for the #engine",
   "created_at": "2026-10-21T08:15:00.000000Z", "updated_at": "…",
-  "source": "watch", "tags": ["engine"], "audio": false,
+  "source": "watch", "tags": ["engine"], "audio": false, "images": [],
   "transcription": "none", "trashed": false, "trashed_at": "",
   "deleted": false, "rev": 12
 }

@@ -17,8 +17,10 @@ the same note twice, after a dropped connection, saves it once.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
+import shutil
 import sqlite3
 import threading
 import uuid
@@ -37,6 +39,25 @@ NONE = "none"
 PENDING = "pending"
 DONE = "done"
 FAILED = "failed"
+
+# Pictures kept with a note: what each kind starts with, and its extension.
+IMAGE_KINDS = ((b"\x89PNG\r\n\x1a\n", "png"), (b"\xff\xd8\xff", "jpg"), (b"GIF87a", "gif"), (b"GIF89a", "gif"))
+MAX_IMAGES = 12
+MAX_IMAGE = 15 * 1024 * 1024
+
+
+def image_kind(data: bytes) -> str:
+    """The extension for picture DATA (PNG, JPEG, GIF, WebP or HEIC), or "" if it is none of them."""
+
+    for magic, ext in IMAGE_KINDS:
+        if data.startswith(magic):
+            return ext
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp"
+    if data[4:8] == b"ftyp" and data[8:12] in (b"heic", b"heix", b"mif1", b"heim", b"heis", b"hevc"):
+        return "heic"
+    return ""
+
 
 _HASHTAG = re.compile(r"(?<![\w#])#([A-Za-z][\w-]{0,39})")
 _RELATIVE = re.compile(r"^\s*(\d+)\s*([hdwm])\s*$", re.IGNORECASE)
@@ -183,6 +204,8 @@ class Store:
             "PRAGMA table_info(notes)")}
         if "trashed_at" not in columns:
             self._db.execute("ALTER TABLE notes ADD COLUMN trashed_at TEXT")
+        if "images" not in columns:
+            self._db.execute("ALTER TABLE notes ADD COLUMN images TEXT NOT NULL DEFAULT '[]'")
         self._db.execute(
             "INSERT OR IGNORE INTO gone (id, rev, at) SELECT id, rev, "
             "updated_at FROM notes WHERE deleted = 1")
@@ -204,6 +227,7 @@ class Store:
             "source": row["source"],
             "tags": json.loads(row["tags"] or "[]"),
             "audio": bool(row["audio_path"]),
+            "images": json.loads(row["images"] or "[]") if "images" in row.keys() else [],
             "transcription": row["transcription"],
             "trashed": row["trashed_at"] is not None,
             "trashed_at": row["trashed_at"] or "",
@@ -220,7 +244,7 @@ class Store:
         return {
             "id": row["id"], "text": "", "created_at": row["at"],
             "updated_at": row["at"], "source": "api", "tags": [],
-            "audio": False, "transcription": NONE, "trashed": False,
+            "audio": False, "images": [], "transcription": NONE, "trashed": False,
             "trashed_at": "", "deleted": True, "rev": row["rev"],
         }
 
@@ -466,6 +490,61 @@ class Store:
             )
             return self.get(note["id"])
 
+    # --- Pictures -----------------------------------------------------
+
+    def images_dir(self, note_id: str) -> Path:
+        return self.path.parent / "images" / key(note_id)
+
+    def add_image(self, note_id: str, data: bytes) -> dict:
+        """Picture DATA kept with the note: its file is named by its own content, so the same picture twice is
+        kept once. The note, with the picture's name in its images."""
+
+        kind = image_kind(data)
+        if not kind:
+            raise NoteError("That is not a picture Ember keeps (PNG, JPEG, GIF, WebP or HEIC).")
+        if len(data) > MAX_IMAGE:
+            raise NoteError("A picture can be at most 15 MB.")
+        with self._lock:
+            note = self.get(note_id)
+            if note is None:
+                raise NoteError(f"No note {note_id}.")
+            name = f"{hashlib.sha256(data).hexdigest()[:16]}.{kind}"
+            have = list(note["images"])
+            if name not in have:
+                if len(have) >= MAX_IMAGES:
+                    raise NoteError(f"A note can keep at most {MAX_IMAGES} pictures.")
+                folder = self.images_dir(note["id"])
+                folder.mkdir(parents=True, exist_ok=True)
+                part = folder / (name + ".part")
+                part.write_bytes(data)
+                part.replace(folder / name)
+                have.append(name)
+            self._db.execute(
+                "UPDATE notes SET images = ?, updated_at = ?, rev = ? WHERE id = ?",
+                (json.dumps(have), now(), self._next_rev(), note["id"]),
+            )
+            return self.get(note["id"])
+
+    def image_path(self, note_id: str, name: str) -> Optional[Path]:
+        note = self.get(note_id, trashed=True)
+        if note is None or name not in note["images"]:
+            return None
+        return self.images_dir(note["id"]) / name
+
+    def remove_image(self, note_id: str, name: str) -> dict:
+        with self._lock:
+            note = self.get(note_id)
+            if note is None:
+                raise NoteError(f"No note {note_id}.")
+            if name not in note["images"]:
+                raise NoteError(f"Note {note_id} has no picture {name}.")
+            (self.images_dir(note["id"]) / name).unlink(missing_ok=True)
+            self._db.execute(
+                "UPDATE notes SET images = ?, updated_at = ?, rev = ? WHERE id = ?",
+                (json.dumps([n for n in note["images"] if n != name]), now(), self._next_rev(), note["id"]),
+            )
+            return self.get(note["id"])
+
     def delete_forever(self, note_id: str) -> dict:
         """Take a note out of the database, from the trash or not, and its
         recording off the disk. Only its id is kept, so clients that
@@ -484,6 +563,7 @@ class Store:
             )
         if path is not None:
             path.unlink(missing_ok=True)
+        shutil.rmtree(self.images_dir(note["id"]), ignore_errors=True)
         return {**note, "deleted": True, "trashed": False, "rev": rev}
 
     def empty_trash(self) -> int:
