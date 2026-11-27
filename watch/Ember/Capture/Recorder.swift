@@ -30,27 +30,39 @@ final class Recorder {
     @ObservationIgnored private var recorder: AVAudioRecorder?
     @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private var fileName: String?
+    /// Saved or thrown away: it never starts after that.
+    @ObservationIgnored private var closed = false
 
     func start() async throws {
         guard await AVAudioApplication.requestRecordPermission() else {
             throw Problem.noMicrophone
         }
+        // Closed while the watch asked for the microphone: starting now
+        // would record, unseen, with nothing left on screen to stop it.
+        guard !closed, !Task.isCancelled else { return }
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.record, mode: .default)
-        try session.setActive(true)
-        try FileManager.default.createDirectory(
-            at: NoteStore.recordings, withIntermediateDirectories: true)
         let name = UUID().uuidString + ".wav"
-        let made = try AVAudioRecorder(url: NoteStore.recording(name), settings: [
-            AVFormatIDKey: kAudioFormatLinearPCM,
-            AVSampleRateKey: 16_000.0,
-            AVNumberOfChannelsKey: 1,
-            AVLinearPCMBitDepthKey: 16,
-            AVLinearPCMIsFloatKey: false,
-            AVLinearPCMIsBigEndianKey: false,
-        ])
-        made.isMeteringEnabled = true
-        guard made.record(forDuration: Self.longest) else { throw Problem.couldNotStart }
+        let made: AVAudioRecorder
+        do {
+            try session.setCategory(.record, mode: .default)
+            try session.setActive(true)
+            try FileManager.default.createDirectory(
+                at: NoteStore.recordings, withIntermediateDirectories: true)
+            made = try AVAudioRecorder(url: NoteStore.recording(name), settings: [
+                AVFormatIDKey: kAudioFormatLinearPCM,
+                AVSampleRateKey: 16_000.0,
+                AVNumberOfChannelsKey: 1,
+                AVLinearPCMBitDepthKey: 16,
+                AVLinearPCMIsFloatKey: false,
+                AVLinearPCMIsBigEndianKey: false,
+            ])
+            made.isMeteringEnabled = true
+            guard made.record(forDuration: Self.longest) else { throw Problem.couldNotStart }
+        } catch {
+            // The microphone is let go of whenever it does not start.
+            try? session.setActive(false)
+            throw error
+        }
         recorder = made
         fileName = name
         recording = true
@@ -97,6 +109,7 @@ final class Recorder {
     }
 
     private func stop() {
+        closed = true
         timer?.invalidate()
         timer = nil
         recorder?.stop()

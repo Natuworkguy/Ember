@@ -22,15 +22,18 @@ final class CaptureRequests {
     }
 }
 
-/// The watch's own dictation, asked for from code: for Retry, and for
-/// Siri and the complication, which should land straight in it.
+/// The watch's own dictation, asked for from code: for Siri and the
+/// complication, which should land straight in it.
 enum Dictation {
     /// Whether dictation could be opened. DONE gets the words, or nil when
     /// nothing was said.
     @MainActor
     @discardableResult
     static func ask(_ done: @escaping (String?) -> Void) -> Bool {
-        guard let screen = WKApplication.shared().visibleInterfaceController else {
+        // Only over a screen that is up and in front: presented any
+        // other time, it can leave Ember stuck.
+        guard WKApplication.shared().applicationState == .active,
+              let screen = WKApplication.shared().visibleInterfaceController else {
             return false
         }
         screen.presentTextInputController(withSuggestions: nil, allowedInputMode: .plain) { results in

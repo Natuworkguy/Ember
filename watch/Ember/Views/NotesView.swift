@@ -9,6 +9,10 @@ struct NotesView: View {
         filter: #Predicate<Note> { $0.syncStateRaw != "deleting" },
         sort: \Note.createdAt, order: .reverse
     ) private var notes: [Note]
+    /// The note whose page is open. The list opens it and closes it: a
+    /// pushed page that reads the dismiss action can hang on watchOS 26
+    /// and later.
+    @State private var open: Note?
 
     var body: some View {
         List {
@@ -21,8 +25,8 @@ struct NotesView: View {
                     .foregroundStyle(.secondary)
             }
             ForEach(notes) { note in
-                NavigationLink {
-                    NoteDetailView(note: note)
+                Button {
+                    open = note
                 } label: {
                     NoteRow(note: note)
                 }
@@ -33,6 +37,9 @@ struct NotesView: View {
             }
         }
         .navigationTitle("Notes")
+        .navigationDestination(item: $open) { note in
+            NoteDetailView(note: note) { open = nil }
+        }
         .refreshable { await sync.sync() }
     }
 }
@@ -168,40 +175,50 @@ struct SyncBadge: View {
 
 struct NoteDetailView: View {
     @Environment(SyncEngine.self) private var sync
-    @Environment(\.dismiss) private var dismiss
     let note: Note
+    /// Deleted: the list closes the page.
+    let deleted: () -> Void
+
+    /// Deleted and on its way off screen: nothing of it is read again.
+    private var gone: Bool { note.isDeleted || note.modelContext == nil }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(note.title)
-                    .foregroundStyle(note.text.isEmpty ? .secondary : .primary)
-                if !note.tags.isEmpty {
-                    Text(note.tags.map { "#" + $0 }.joined(separator: " "))
-                        .font(.caption)
-                        .foregroundStyle(Theme.ember)
-                }
-                HStack(spacing: 4) {
-                    SyncBadge(note: note)
-                    Text(note.createdAt.formatted(date: .abbreviated, time: .shortened))
-                }
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                if let why = note.lastError {
-                    Text(why)
-                        .font(.caption2)
-                        .foregroundStyle(.yellow)
-                }
-                if note.syncState == .failed {
-                    Button("Try again") { sync.retry(note) }
-                }
-                Button("Delete", role: .destructive) {
-                    NoteStore.delete(note)
-                    sync.syncSoon()
-                    dismiss()
-                }
+            if !gone {
+                details
             }
         }
-        .navigationTitle(note.createdAt.formatted(.dateTime.weekday(.abbreviated).hour().minute()))
+        .navigationTitle(gone ? "" : note.createdAt.formatted(.dateTime.weekday(.abbreviated).hour().minute()))
+    }
+
+    private var details: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(note.title)
+                .foregroundStyle(note.text.isEmpty ? .secondary : .primary)
+            if !note.tags.isEmpty {
+                Text(note.tags.map { "#" + $0 }.joined(separator: " "))
+                    .font(.caption)
+                    .foregroundStyle(Theme.ember)
+            }
+            HStack(spacing: 4) {
+                SyncBadge(note: note)
+                Text(note.createdAt.formatted(date: .abbreviated, time: .shortened))
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            if let why = note.lastError {
+                Text(why)
+                    .font(.caption2)
+                    .foregroundStyle(.yellow)
+            }
+            if note.syncState == .failed {
+                Button("Try again") { sync.retry(note) }
+            }
+            Button("Delete", role: .destructive) {
+                deleted()
+                NoteStore.delete(note)
+                sync.syncSoon()
+            }
+        }
     }
 }
