@@ -167,7 +167,7 @@ struct CaptureView: View {
         }
         .navigationTitle("Ember")
         .sheet(item: $draft) { draft in
-            ReviewView(text: draft.text, save: { save($0) }, retry: retry)
+            ReviewView(text: draft.text) { save($0) }
         }
         .sheet(isPresented: $recording) {
             RecordView { saved in
@@ -225,17 +225,6 @@ struct CaptureView: View {
         }
     }
 
-    private func retry() {
-        draft = nil
-        Task {
-            // Let the sheet go before dictation comes up.
-            try? await Task.sleep(for: .milliseconds(450))
-            Dictation.ask { text in
-                if let text { review(text) }
-            }
-        }
-    }
-
     /// Start what Siri, the complication or a shortcut asked for.
     private func answer(_ request: CaptureRequests.Kind?) async {
         guard let request else { return }
@@ -258,10 +247,18 @@ struct CaptureView: View {
 }
 
 /// The words dictation heard, to save with one tap, or say again.
+///
+/// Saying it again is dictation right here, in place: closing the sheet
+/// and opening WatchKit's text input over SwiftUI could leave the screen
+/// stuck.
 struct ReviewView: View {
-    let text: String
+    @State private var text: String
     let save: (String) -> Void
-    let retry: () -> Void
+
+    init(text: String, save: @escaping (String) -> Void) {
+        _text = State(initialValue: text)
+        self.save = save
+    }
 
     var body: some View {
         NavigationStack {
@@ -276,11 +273,14 @@ struct ReviewView: View {
             .navigationTitle("Your idea")
             .toolbar {
                 ToolbarItemGroup(placement: .bottomBar) {
-                    Button(action: retry) {
+                    TextFieldLink(prompt: Text("Your idea")) {
                         Image(systemName: "arrow.counterclockwise")
                             .foregroundStyle(.white)
+                    } onSubmit: { said in
+                        let words = said.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !words.isEmpty { text = words }
                     }
-                    .accessibilityLabel("Retry")
+                    .accessibilityLabel("Say it again")
                     Spacer()
                     Button {
                         save(text)
