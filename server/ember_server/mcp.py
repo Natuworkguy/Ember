@@ -24,7 +24,7 @@ from datetime import datetime
 from typing import Callable
 
 from . import __version__
-from .store import NoteError, Store
+from .store import NoteError, Store, idea
 
 PROTOCOL = "2025-06-18"
 PID_FILE = "mcp.pid"
@@ -35,7 +35,8 @@ INSTRUCTIONS = (
     "The user keeps ideas in Ember, mostly said aloud to their Apple "
     "Watch. When they ask what they thought, planned or noted about "
     "something, search Ember before answering, and quote the notes you "
-    "use with their dates. \"This week\" is since 7d."
+    "use with their dates. \"This week\" is since 7d. A note's first line "
+    "is the idea; any lines after it are its details."
 )
 
 WHEN = ("An ISO date or time (2026-10-21), or how long ago: 24h, 7d, 2w, "
@@ -167,6 +168,9 @@ def line(note: dict) -> str:
         "(a recording, not yet heard)"
         if note.get("transcription") == "pending"
         else "(a recording that could not be heard)")
+    said, details = idea(text)
+    if details:
+        text = f"{said}\nDetails:\n{details}"
     pics = len(note.get("images") or [])
     more = f"\n({pics} picture{'s' if pics != 1 else ''} attached)" if pics else ""
     return f"{head}{'  ' + tags if tags else ''}\n{text}{more}"

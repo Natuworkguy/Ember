@@ -32,7 +32,7 @@ import unicodedata
 from datetime import datetime
 from typing import Optional
 
-from .store import NoteError, Store
+from .store import NoteError, Store, idea
 
 # A flame, and "ember" in figlet's small font.
 LOGO = (
@@ -337,7 +337,7 @@ class Browser:
             tags = " ".join("#" + t for t in extra_tags(note)[:3])
             tag_room = min(width(tags), max(0, w // 3)) if tags else 0
             text_room = w - 15 - (tag_room + 2 if tag_room else 0)
-            words = fit(shown_text(note), max(8, text_room))
+            words = fit(idea(shown_text(note))[0], max(8, text_room))
             look = base | (curses.color_pair(FRESH) | curses.A_BOLD
                            if fresh else 0)
             if not note["text"]:

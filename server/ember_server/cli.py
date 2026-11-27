@@ -306,6 +306,7 @@ def list_notes(args: argparse.Namespace) -> None:
 def _print_list(found: list[dict]) -> None:
     from datetime import datetime
 
+    from .store import idea
     from .tui import extra_tags, fit, short_time, shown_text, when
 
     now = datetime.now().astimezone()
@@ -313,7 +314,7 @@ def _print_list(found: list[dict]) -> None:
     for note in found:
         stamp = short_time(when(note["created_at"]), now)
         tags = " ".join("#" + t for t in extra_tags(note))
-        text = shown_text(note)
+        text = idea(shown_text(note))[0]
         rest = room - 22 - (len(tags) + 1 if tags else 0)
         print(_paint(note["id"][:8], "38;5;208"),
               _paint(f"{stamp:>9}", "2"),

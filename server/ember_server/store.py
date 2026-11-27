@@ -162,6 +162,14 @@ def clean_tags(tags: Any, text: str = "") -> list[str]:
     return found[:MAX_TAGS]
 
 
+def idea(text: str) -> tuple[str, str]:
+    """A note's TEXT as an idea and its details, as a commit message is:
+    the first line is the idea, the lines after it are details."""
+
+    head, _, rest = (text or "").strip().partition("\n")
+    return head.strip(), rest.strip()
+
+
 def key(note_id: str) -> str:
     """A note's id as kept: a UUID, in lowercase. Clients may send it in
     capitals: Swift's UUID does."""

@@ -20,6 +20,8 @@ import threading
 from typing import Optional
 from urllib.parse import urlencode
 
+from .store import idea
+
 ISOLA_ID = "com.natuworkguy.isola"
 GATHER_SECONDS = 2.0
 
@@ -51,7 +53,9 @@ def words(notes: list[dict]) -> tuple[str, str]:
     """A banner's title and text, for NOTES that arrived together."""
 
     def said(note: dict) -> str:
-        return " ".join((note["text"] or "A recording, being heard.").split())
+        # The idea, its first line: its details are for reading later.
+        return " ".join((idea(note["text"])[0]
+                         or "A recording, being heard.").split())
 
     if len(notes) == 1:
         title = "New idea" if notes[0]["source"] == "watch" else "Note saved"
